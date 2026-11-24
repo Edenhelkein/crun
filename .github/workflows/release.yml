@@ -14,6 +14,7 @@ jobs:
     env:
       # secrets 不能直接用在 if 里，先落到 env
       HAS_PFX: ${{ secrets.CRUN_PFX_B64 != '' && 'yes' || 'no' }}
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
