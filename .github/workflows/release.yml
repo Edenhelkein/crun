@@ -1,0 +1,95 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install --no-cache-dir pyinstaller==6.22.3
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}" -replace '^v',''
+          if (-not $v) { $v = "0.0.0-dev" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build app (onedir, no UPX, version resource + manifest + icon)
+        run: pyinstaller packaging/crun.spec --noconfirm --clean --distpath dist/win --workpath build
+
+      - name: Verify app
+        shell: pwsh
+        run: |
+          dist/win/crun/crun.exe version
+          dist/win/crun/crun.exe doctor
+
+      - name: Import signing certificate
+        if: ${{ secrets.CRUN_PFX_B64 != '' }}
+        shell: pwsh
+        run: |
+          $bytes = [Convert]::FromBase64String("${{ secrets.CRUN_PFX_B64 }}")
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\crun.pfx", $bytes)
+
+      - name: Sign app
+        if: ${{ secrets.CRUN_PFX_B64 != '' }}
+        shell: pwsh
+        env:
+          CRUN_PFX_PASS: ${{ secrets.CRUN_PFX_PASS }}
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+                      Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+              /f "$env:RUNNER_TEMP\crun.pfx" /p "$env:CRUN_PFX_PASS" dist\win\crun\crun.exe
+          & $signtool.FullName verify /pa dist\win\crun\crun.exe
+
+      # 清单里的 url 用相对文件名，客户端从 releases/latest/download/ 解析，不需要自建服务器
+      - name: Package + manifest
+        shell: pwsh
+        env:
+          CRUN_HMAC_KEY: ${{ secrets.CRUN_HMAC_KEY }}
+        run: |
+          $args = @("tools/publish.py", "--version", "${{ steps.ver.outputs.version }}",
+                    "--github-repo", "${{ github.repository }}")
+          if ($env:CRUN_HMAC_KEY) { $args += @("--key", $env:CRUN_HMAC_KEY) }
+          python @args
+
+      - name: Build installer
+        run: pyinstaller packaging/crun_setup.spec --noconfirm --clean --distpath dist/installer
+
+      - name: Sign installer
+        if: ${{ secrets.CRUN_PFX_B64 != '' }}
+        shell: pwsh
+        env:
+          CRUN_PFX_PASS: ${{ secrets.CRUN_PFX_PASS }}
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+                      Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
+          Get-ChildItem dist\installer\*.exe | ForEach-Object {
+            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+                /f "$env:RUNNER_TEMP\crun.pfx" /p "$env:CRUN_PFX_PASS" $_.FullName
+          }
+
+      - name: Attach to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release create $tag dist/release/*.zip dist/release/manifest.json dist/installer/*.exe `
+            --repo "${{ github.repository }}" --title "crun ${{ steps.ver.outputs.version }}" `
+            --notes "安装：下载 crun-setup-*.exe；更新：crun update --github ${{ github.repository }} --apply" --clobber
