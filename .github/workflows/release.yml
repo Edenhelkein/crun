@@ -97,6 +97,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $tag = "${{ github.ref_name }}"
-          gh release create $tag dist/release/*.zip dist/release/manifest.json dist/installer/*.exe `
-            --repo "${{ github.repository }}" --title "crun ${{ steps.ver.outputs.version }}" `
-            --notes "安装：下载 crun-setup-*.exe；更新：crun update --github ${{ github.repository }} --apply" --clobber
+          $repo = "${{ github.repository }}"
+          $assets = @(Get-ChildItem dist/release/*.zip, dist/release/manifest.json, dist/installer/*.exe |
+                      ForEach-Object { $_.FullName })
+          Write-Host "assets:" ($assets -join ", ")
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --repo $repo --clobber
+          } else {
+            gh release create $tag @assets --repo $repo `
+              --title "crun ${{ steps.ver.outputs.version }}" `
+              --notes "安装：下载 crun-setup-*.exe。更新：crun update --github $repo --apply"
+          }
