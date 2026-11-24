@@ -11,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # secrets 不能直接用在 if 里，先落到 env
+      HAS_PFX: ${{ secrets.CRUN_PFX_B64 != '' && 'yes' || 'no' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +29,10 @@ jobs:
         shell: pwsh
         run: |
           $v = "${{ github.ref_name }}" -replace '^v',''
-          if (-not $v) { $v = "0.0.0-dev" }
+          if (-not $v -or $v -eq "main" -or $v -eq "master") {
+            $m = Select-String -Path crun/__init__.py -Pattern '__version__\s*=\s*"([^"]+)"'
+            if ($m) { $v = $m.Matches[0].Groups[1].Value } else { $v = "0.0.0-dev" }
+          }
           "version=$v" >> $env:GITHUB_OUTPUT
 
       - name: Build app (onedir, no UPX, version resource + manifest + icon)
@@ -39,14 +45,14 @@ jobs:
           dist/win/crun/crun.exe doctor
 
       - name: Import signing certificate
-        if: ${{ secrets.CRUN_PFX_B64 != '' }}
+        if: env.HAS_PFX == 'yes'
         shell: pwsh
         run: |
           $bytes = [Convert]::FromBase64String("${{ secrets.CRUN_PFX_B64 }}")
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\crun.pfx", $bytes)
 
       - name: Sign app
-        if: ${{ secrets.CRUN_PFX_B64 != '' }}
+        if: env.HAS_PFX == 'yes'
         shell: pwsh
         env:
           CRUN_PFX_PASS: ${{ secrets.CRUN_PFX_PASS }}
@@ -72,7 +78,7 @@ jobs:
         run: pyinstaller packaging/crun_setup.spec --noconfirm --clean --distpath dist/installer
 
       - name: Sign installer
-        if: ${{ secrets.CRUN_PFX_B64 != '' }}
+        if: env.HAS_PFX == 'yes'
         shell: pwsh
         env:
           CRUN_PFX_PASS: ${{ secrets.CRUN_PFX_PASS }}
