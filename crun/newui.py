@@ -163,7 +163,8 @@ class App(ctk.CTk):
         c1.place(x=self.X(28), y=self.X(88))
         c1.pack_propagate(False)
         self.lbl(c1, "学校", size=13, bold=True).place(x=self.X(18), y=self.X(14))
-        self.lbl(c1, "%d 所" % self.store.schools, size=26, bold=True).place(x=self.X(18), y=self.X(40))
+        self.school_count = self.lbl(c1, "%d 所" % self.store.schools, size=26, bold=True)
+        self.school_count.place(x=self.X(18), y=self.X(40))
         self.btn(c1, "更新学校列表", cmd=self.on_schools, w=150).place(x=self.X(18), y=self.X(96))
 
         # 账号
@@ -275,14 +276,13 @@ class App(ctk.CTk):
         log = self._log(self.log_prep)
         def job():
             from . import bridge
-            log("开始更新学校列表…")
+            log("开始更新学校列表（按省份抓取，写入 province_name）…")
             try:
-                ps = bridge.provinces(log)
-                total = 0
-                for pid, name in ps[:3]:
-                    rows = bridge.schools_of_province(pid, log)
-                    total += len(rows)
-                log("完成（示例取前 3 个省份，共 %d 所学校）" % total)
+                stat = bridge.update_schools(self.store.db, log)
+                total = sum(c for _, c in stat)
+                provs = len([n for n, _ in stat if n])
+                log("完成：%d 个省份 / %d 所学校" % (provs, total))
+                self.after(0, lambda: self.school_count.configure(text="%d 所" % total))
             except Exception as e:
                 log("失败：%s" % e)
         self.bg(job)
