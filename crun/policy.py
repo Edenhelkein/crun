@@ -11,7 +11,12 @@ import json
 import os
 import time
 
-DEFAULT_MODES = ("campus_run", "morning_run", "extra_activity")
+DEFAULT_MODES = ("morning_run", "free_run", "sunshine_run")
+MODE_LABELS = {"morning_run": "晨跑", "free_run": "自由跑", "sunshine_run": "阳光跑"}
+MODE_ALIASES = {  # 老版本叫法 -> 新标识
+    "campus_run": "free_run", "extra_activity": "sunshine_run", "run": "free_run",
+    "晨跑": "morning_run", "自由跑": "free_run", "阳光跑": "sunshine_run",
+}
 DEFAULT_MAX_ATTEMPTS = 5
 LOCK_SECONDS = 24 * 3600
 
@@ -71,6 +76,7 @@ class PolicyEngine:
 
     # ---------- 模式 ----------
     def check_mode(self, mode):
+        mode = MODE_ALIASES.get(mode, mode)
         if mode in self.allowed_modes:
             return True, "模式在白名单内"
         return False, f"模式 {mode} 未开设，请求非白名单模式会被记为异常"

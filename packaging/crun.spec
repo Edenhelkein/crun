@@ -9,6 +9,8 @@
 """
 import os
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 ROOT = os.path.dirname(SPECPATH)
 
 a = Analysis(
@@ -18,13 +20,13 @@ a = Analysis(
     datas=[
         (os.path.join(ROOT, 'crun', 'hooks.js'), 'crun'),
         (os.path.join(ROOT, 'crun', 'ui', 'index.html'), 'crun/ui'),
-    ],
-    hiddenimports=[],
+    ] + collect_data_files('customtkinter'),
+    hiddenimports=['customtkinter', 'darkdetect', 'sqlite3'] + collect_submodules('customtkinter'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'tkinter', 'turtle', 'unittest', 'doctest', 'pydoc', 'pydoc_data',
+        'unittest', 'doctest', 'pydoc', 'pydoc_data',
         'test', 'lib2to3', 'numpy', 'pandas', 'PIL', 'matplotlib', 'scipy',
         'ftplib', 'imaplib', 'smtplib', 'multiprocessing.dummy',
     ],

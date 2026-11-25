@@ -226,10 +226,10 @@ def cmd_version(a):
 
 
 def main(argv=None):
-    # 双击 exe（无参数）直接进控制台界面，避免控制台一闪而过
+    # 双击 exe（无参数）直接开桌面界面
     if argv is None and len(sys.argv) == 1:
-        import types
-        return cmd_ui(types.SimpleNamespace(port=8777, work_dir=".", no_browser=False))
+        from .gui import main as gui_main
+        return gui_main()
     p = argparse.ArgumentParser(prog="crun")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -283,6 +283,9 @@ def main(argv=None):
     ui.add_argument("--work-dir", default=".")
     ui.add_argument("--no-browser", action="store_true")
     ui.set_defaults(func=cmd_ui)
+
+    gp = sub.add_parser("gui"); gp.add_argument("--work-dir", default=None)
+    gp.set_defaults(func=lambda a: __import__("crun.gui", fromlist=["main"]).main(a.work_dir))
 
     up = sub.add_parser("update")
     up.add_argument("manifest", nargs="?", help="清单 URL / 本地路径；用 --github 时可省略")
