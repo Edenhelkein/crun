@@ -39,6 +39,13 @@ jobs:
       - name: Build app (onedir, no UPX, version resource + manifest + icon)
         run: pyinstaller packaging/crun.spec --noconfirm --clean --distpath dist/win --workpath build
 
+      - name: Build uninstaller and bundle it
+        shell: pwsh
+        run: |
+          pyinstaller packaging/crun_uninstall.spec --noconfirm --clean --distpath dist/uninstaller --workpath build_unin
+          Copy-Item dist/uninstaller/crun-uninstall.exe dist/win/crun/uninstall.exe -Force
+          Get-ChildItem dist/win/crun | Select-Object Name
+
       - name: Verify app
         shell: pwsh
         run: |
