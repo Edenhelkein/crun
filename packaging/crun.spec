@@ -53,6 +53,7 @@ a = Analysis(
         (os.path.join(ROOT, 'crun', 'ui', 'index.html'), 'crun/ui'),
         (os.path.join(ROOT, 'assets', 'tsn_data.db'), 'assets'),
         (os.path.join(ROOT, 'assets', 'device_profiles.json'), '.'),
+        (os.path.join(ROOT, 'assets', 'crun_theme.json'), 'assets'),
     ] + collect_data_files('customtkinter')
       + [(os.path.join(ROOT, 'legacy'), 'legacy'), (os.path.join(ROOT, 'legacy_site'), 'legacy_site')],
     hiddenimports=(['customtkinter', 'darkdetect', 'sqlite3', 'sysconfig']

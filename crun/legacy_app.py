@@ -131,12 +131,48 @@ def ensure_data_dir(data_dir, legacy_dirs):
 
 
 def apply_patches(log=print):
-    """给原版打补丁：路线平滑 + 自审日志。失败不影响主流程。"""
+    """给原版打补丁：设备指纹轮换 + 路径池 + 路线平滑 + 上传前自审。"""
+    # 1) 设备指纹轮换：必须在 tsnRunServer 之前装着，否则它 import 时已经绑定了旧函数
+    try:
+        import device_profile as DP
+        from .device_rotate import install as install_rotate, ROTATE_DAYS
+        if install_rotate(DP, log):
+            log("[设备] 已启用按账号的设备指纹轮换（每 %d 天一代）" % int(ROTATE_DAYS))
+    except Exception as e:
+        log("[设备] 轮换未启用：%s" % e)
+
     try:
         import tsnRunServer as S
     except Exception as e:
         log("[增强] 载入 tsnRunServer 失败，跳过补丁：%s" % e)
         return
+
+    # 2) 路径池：把原版 queryPath 里的 random.choice 换成"最久没用优先"
+    try:
+        from .route_pool import choose as pool_choose
+
+        class _RandomShim:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def choice(self, seq):
+                try:
+                    items = list(seq)
+                    if items and hasattr(items[0], "run_path_id"):
+                        pick = pool_choose(items)
+                        if pick is not None:
+                            return pick
+                except Exception:
+                    pass
+                return self._real.choice(seq)
+
+        S.random = _RandomShim(S.random)
+        log("[路径] 已启用路径池（优先最久没用过的路线）")
+    except Exception as e:
+        log("[路径] 池化未启用：%s" % e)
 
     orig = getattr(S, "genTiShiNengRunPathRepeat", None)
     if orig is None:
@@ -277,7 +313,7 @@ def _boot_log(msg, data_dir=None):
 
 
 def _polish_ui():
-    """套一层更好看的主题：深色 + 绿色强调色 + 高 DPI 清晰字体。"""
+    """外观：深色 + 自定义主题（有就用 assets/crun_theme.json）+ 高 DPI。"""
     try:
         import ctypes
         try:
@@ -289,7 +325,15 @@ def _polish_ui():
     try:
         import customtkinter as ctk
         ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("green")
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base = getattr(sys, "_MEIPASS", None) or here
+        theme = None
+        for cand in (os.path.join(base, "assets", "crun_theme.json"),
+                     os.path.join(here, "assets", "crun_theme.json")):
+            if os.path.exists(cand):
+                theme = cand
+                break
+        ctk.set_default_color_theme(theme or "green")
     except Exception:
         pass
 
