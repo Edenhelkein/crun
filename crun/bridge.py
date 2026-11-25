@@ -176,20 +176,50 @@ def query_stats(account_id, log=print):
 
 
 def crawl_paths(account_id, log=print):
+    """爬取路径：原版用的是 spiderServer.startSpider，不是 TsnRunServer.queryPath。"""
     ensure_paths()
-    from tsnRunServer import TsnRunServer, TsnRunType
-    srv = TsnRunServer(account_id, 2.0, TsnRunType.freedom)
-    res = _run(srv.queryPath())
-    log("爬取路径完成：%s" % str(res)[:120])
-    return res
+    import logging
+    import spiderServer as SP
+    log("正在从学校的跑步服务端爬取路线…")
+    old = logging.root.manager.disable
+    logging.disable(logging.INFO)          # 原版会把整条轨迹打进日志，别刷屏
+    try:
+        _run(SP.startSpider(account_id))
+    finally:
+        logging.disable(old)
+    log("爬取完成")
+    return True
 
 
 def update_face(account_id, log=print):
+    """更新人脸：先把 accountModel / tsnClient 塞进 TsnRunServer，否则 getFaceImage 会空指针。"""
     ensure_paths()
+    import database
+    import models
+    # 动态导入：静态 import 会让 PyInstaller 去分析 sqlalchemy，而它是以 .pyc 形式随包发的
+    _sa = __import__("sqlalchemy", fromlist=["select"])
+    _orm = __import__("sqlalchemy.orm", fromlist=["selectinload"])
+    select, selectinload = _sa.select, _orm.selectinload
     from tsnRunServer import TsnRunServer, TsnRunType
-    srv = TsnRunServer(account_id, 2.0, TsnRunType.freedom)
-    res = _run(srv.getFaceImage())
-    log("人脸：%s" % str(res)[:120])
+    from tsnClient import getTsnClientById
+
+    async def work():
+        async for db in database.get_db():
+            acc = (await db.execute(
+                select(models.TsnAccount_Model)
+                .options(selectinload(models.TsnAccount_Model.school))
+                .where(models.TsnAccount_Model.id == account_id))).scalars().first()
+            if acc is None:
+                raise RuntimeError("账号不存在")
+            srv = TsnRunServer(account_id, 2.0, TsnRunType.freedom)
+            srv.accountModel = acc
+            srv.tsnClient = await getTsnClientById(account_id, db)
+            srv.isPublic = False
+            log("客户端就绪，开始拉取人脸…")
+            return await srv.getFaceImage()
+
+    res = _run(work())
+    log("人脸：%s" % str(res)[:160])
     return res
 
 
