@@ -5,11 +5,13 @@
 - 清单里的 min_from 防止跨大版本跳级（数据结构可能不兼容）。
 - 可选 HMAC 签名：manifest.signature = HMAC(KEY, version + sha256)，避免中间人改包。
 """
+import contextlib
 import hashlib
 import hmac
 import json
 import os
 import shutil
+import socket
 import time
 import urllib.request
 import zipfile
@@ -17,6 +19,48 @@ import zipfile
 from . import __version__
 
 MANIFEST_KEYS = ("version", "url", "sha256")
+
+# 国内 DNS 污染 github.com 时的兜底解析（只在正常连接失败后启用，可用 CRUN_NO_PIN=1 关闭）
+PIN_IPS = {
+    "github.com": "20.205.243.166",
+    "api.github.com": "20.205.243.168",
+    "codeload.github.com": "20.205.243.165",
+    "objects.githubusercontent.com": "185.199.108.133",
+}
+
+
+@contextlib.contextmanager
+def _pinned_dns():
+    if os.environ.get("CRUN_NO_PIN"):
+        yield
+        return
+    orig = socket.getaddrinfo
+
+    def patched(host, port, *a, **kw):
+        ip = PIN_IPS.get(host)
+        if ip:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+        return orig(host, port, *a, **kw)
+
+    socket.getaddrinfo = patched
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = orig
+
+
+def _with_pin_fallback(fn):
+    """先按系统 DNS 走；失败（被污染/超时）再固定 IP 重试一次。"""
+    try:
+        return fn()
+    except Exception as first:
+        if os.environ.get("CRUN_NO_PIN"):
+            raise
+        try:
+            with _pinned_dns():
+                return fn()
+        except Exception:
+            raise first
 
 
 def parse_version(v):
@@ -49,8 +93,10 @@ def _load(source, allow_http=False, manifest_url=None):
     if source.startswith("http://") and not allow_http:
         raise ValueError("拒绝明文 http 清单：请用 https:// 或显式 --allow-http（仅限内网自测）")
     if source.startswith(("http://", "https://")):
-        with urllib.request.urlopen(source, timeout=15) as r:
-            return json.loads(r.read().decode("utf-8"))
+        def _get():
+            with urllib.request.urlopen(source, timeout=15) as r:
+                return json.loads(r.read().decode("utf-8"))
+        return _with_pin_fallback(_get)
     with open(source, encoding="utf-8") as f:
         return json.load(f)
 
@@ -97,7 +143,7 @@ def _sha256_file(path):
 
 def _download(url, dest):
     if url.startswith(("http://", "https://")):
-        urllib.request.urlretrieve(url, dest)
+        _with_pin_fallback(lambda: urllib.request.urlretrieve(url, dest))
     else:
         shutil.copyfile(url, dest)
     return dest
