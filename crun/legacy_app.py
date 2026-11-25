@@ -34,24 +34,43 @@ def prepare_path():
 
 
 def ensure_data_dir(data_dir, legacy_dirs):
-    """原版把 tsn_data.db 当相对路径用，所以先把库准备好再切工作目录。"""
+    """原版把 tsn_data.db / device_profiles.json 当相对路径用，先把它们准备好。"""
     os.makedirs(data_dir, exist_ok=True)
     db = os.path.join(data_dir, "tsn_data.db")
-    if os.path.exists(db):
-        return db
-    # 1) 打包自带的干净库（只有学校）
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     base = getattr(sys, "_MEIPASS", None) or here
-    for cand in (os.path.join(base, "assets", "tsn_data.db"), os.path.join(here, "assets", "tsn_data.db")):
-        if os.path.exists(cand):
-            shutil.copyfile(cand, db)
-            return db
-    # 2) 旧版安装目录里的库（含账号与路线）
-    for d in legacy_dirs:
-        for src in (os.path.join(d, "tsn_data.db"), os.path.join(os.path.dirname(d), "tsn_data.db")):
-            if os.path.exists(src):
-                shutil.copyfile(src, db)
-                return db
+
+    if not os.path.exists(db):
+        for cand in (os.path.join(base, "assets", "tsn_data.db"), os.path.join(here, "assets", "tsn_data.db")):
+            if os.path.exists(cand):
+                shutil.copyfile(cand, db)
+                break
+        else:
+            for d in legacy_dirs:
+                for src in (os.path.join(d, "tsn_data.db"), os.path.join(os.path.dirname(d), "tsn_data.db")):
+                    if os.path.exists(src):
+                        shutil.copyfile(src, db)
+                        break
+
+    # 设备指纹文件：原版读 _MEIPASS/device_profiles.json，缺了会报 Errno 2
+    prof = os.path.join(data_dir, "device_profiles.json")
+    if not os.path.exists(prof):
+        for cand in (os.path.join(base, "device_profiles.json"),
+                     os.path.join(base, "assets", "device_profiles.json"),
+                     os.path.join(here, "assets", "device_profiles.json")):
+            try:
+                if os.path.exists(cand):
+                    shutil.copyfile(cand, prof)
+                    break
+            except OSError:
+                pass
+
+    # 这些目录原版会往里写东西，先建好，省得运行到一半 Errno 2
+    for sub in ("logs", "faces", "face", "images", "out"):
+        try:
+            os.makedirs(os.path.join(data_dir, sub), exist_ok=True)
+        except OSError:
+            pass
     return db
 
 

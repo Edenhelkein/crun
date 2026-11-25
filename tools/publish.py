@@ -27,11 +27,14 @@ def sha256(path):
 
 
 def zip_dir(src, dst):
+    """打包时在 zip 里套一层同名文件夹：用户解压/拖动时不会散成一地文件。"""
+    top = os.path.splitext(os.path.basename(dst))[0]
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for base, _dirs, files in os.walk(src):
             for fn in files:
                 full = os.path.join(base, fn)
-                z.write(full, os.path.relpath(full, src))
+                rel = os.path.relpath(full, src).replace("\\", "/")
+                z.write(full, f"{top}/{rel}")
     return dst
 
 
