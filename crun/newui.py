@@ -73,9 +73,10 @@ class App(ctk.CTk):
         self.db_state = "ok"
         try:
             from . import bridge
-            # 每次启动先留一份备份，再把被删空的库自愈回来
+            # 每次启动先留一份备份（数据目录 + 用户目录各一份），再把被删空的库自愈回来
             if os.path.exists(self.store.db) and os.path.getsize(self.store.db) > 0:
                 shutil.copyfile(self.store.db, os.path.join(self.dir, "tsn_data.backup-latest.db"))
+                bridge.backup_now(self.store.db)
             self.db_state = bridge.ensure_db(self.store.db, log=lambda m: None)
         except Exception:
             self.db_state = "ok"

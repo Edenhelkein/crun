@@ -38,6 +38,32 @@ def _run(coro):
             loop.close()
 
 
+def backup_dir():
+    """备份放在用户目录下，这样连 %LOCALAPPDATA% 被清也能捡回来。"""
+    d = os.path.join(os.path.expanduser("~"), "CRUN备份")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def backup_now(db_path, log=None):
+    import shutil
+    if not (os.path.exists(db_path) and os.path.getsize(db_path) > 0):
+        return None
+    try:
+        dst = os.path.join(backup_dir(), "tsn_data-latest.db")
+        shutil.copyfile(db_path, dst)
+        if log:
+            log("已备份数据库到 %s" % dst)
+        return dst
+    except OSError as e:
+        if log:
+            log("备份失败：%s" % e)
+        return None
+
+
 def ensure_db(db_path=None, log=print):
     """数据库被删/被清空时自愈：先用随包种子恢复，再不行就建空表。
 
@@ -64,12 +90,13 @@ def ensure_db(db_path=None, log=print):
     # 先用本地自动备份（里面才有账号），再用随包种子
     backups = sorted(glob.glob(os.path.join(os.path.dirname(db_path), "tsn_data.backup-*.db")),
                      reverse=True)
-    seeds = backups + [os.path.join(base, "assets", "tsn_data.db")]
+    ext = os.path.join(backup_dir(), "tsn_data-latest.db")
+    seeds = [ext] + backups + [os.path.join(base, "assets", "tsn_data.db")]
     for s in seeds:
         if os.path.exists(s) and os.path.getsize(s) > 0:
             shutil.copyfile(s, db_path)
-            log("本地数据库缺失/损坏，已从 %s 恢复" % os.path.basename(s))
-            return "restored" if "backup" not in s else "restored-backup"
+            log("本地数据库缺失/损坏，已从 %s 恢复" % s)
+            return "restored"
     # 连种子都没有：建空表，至少不报 "no such table"
     try:
         import sqlite3
