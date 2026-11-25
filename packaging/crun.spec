@@ -26,7 +26,7 @@ a = Analysis(
     excludes=[
         'tkinter', 'turtle', 'unittest', 'doctest', 'pydoc', 'pydoc_data',
         'test', 'lib2to3', 'numpy', 'pandas', 'PIL', 'matplotlib', 'scipy',
-        'sqlite3', 'ftplib', 'imaplib', 'smtplib', 'multiprocessing.dummy',
+        'ftplib', 'imaplib', 'smtplib', 'multiprocessing.dummy',
     ],
     noarchive=False,
     optimize=0,

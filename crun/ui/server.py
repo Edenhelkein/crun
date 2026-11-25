@@ -164,15 +164,46 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--work", default=None)
+    ap.add_argument("--no-browser", action="store_true")
     a = ap.parse_args(argv)
     if a.work:
         os.environ["CRUN_WORK"] = os.path.abspath(a.work)
-    srv = ThreadingHTTPServer((a.host, a.port), Handler)
-    print(f"crun ui: http://{a.host}:{a.port}/   work={_work()}  version={__version__}")
+
+    srv = None
+    port = a.port
+    for p in range(a.port, a.port + 15):      # 端口被占就往后找
+        busy = False
+        try:                                   # Windows 下 SO_REUSEADDR 会允许重复绑定，先探活
+            import socket as _s
+            with _s.create_connection((a.host, p), timeout=0.3):
+                busy = True
+        except OSError:
+            busy = False
+        if busy:
+            continue
+        try:
+            srv = ThreadingHTTPServer((a.host, p), Handler)
+            port = p
+            break
+        except OSError:
+            continue
+    if srv is None:
+        print(f"没有可用端口（从 {a.port} 起试了 15 个）")
+        return 1
+
+    url = f"http://{a.host}:{port}/"
+    print(f"crun ui: {url}   work={_work()}  version={__version__}")
+    if not a.no_browser:
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    return 0
 
 
 if __name__ == "__main__":

@@ -138,7 +138,8 @@ def cmd_checks(a):
 
 def cmd_ui(a):
     from .ui import server
-    return server.main(["--port", str(a.port), "--work", a.work_dir])
+    return server.main(["--port", str(a.port), "--work", a.work_dir] +
+                       (["--no-browser"] if getattr(a, "no_browser", False) else []))
 
 
 def cmd_update(a):
@@ -162,7 +163,8 @@ def cmd_migrate(a):
     from .migrate import candidate_dirs, merge, scan
     dirs = candidate_dirs(a.dir)
     found = scan(dirs)
-    out = {"target": os.path.abspath(a.work_dir), "scanned": len(dirs), "found": found}
+    out = {"target": os.path.abspath(a.work_dir), "scanned": len(dirs),
+           "scanned_dirs": dirs[:40], "found": found}
     if a.apply:
         src = [r["dir"] for r in found
                if os.path.normcase(os.path.abspath(r["dir"])) != os.path.normcase(os.path.abspath(a.work_dir))]
@@ -224,6 +226,10 @@ def cmd_version(a):
 
 
 def main(argv=None):
+    # 双击 exe（无参数）直接进控制台界面，避免控制台一闪而过
+    if argv is None and len(sys.argv) == 1:
+        import types
+        return cmd_ui(types.SimpleNamespace(port=8777, work_dir=".", no_browser=False))
     p = argparse.ArgumentParser(prog="crun")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -274,7 +280,9 @@ def main(argv=None):
     ck = sub.add_parser("checks"); ck.set_defaults(func=cmd_checks)
 
     ui = sub.add_parser("ui"); ui.add_argument("--port", type=int, default=8777)
-    ui.add_argument("--work-dir", default="."); ui.set_defaults(func=cmd_ui)
+    ui.add_argument("--work-dir", default=".")
+    ui.add_argument("--no-browser", action="store_true")
+    ui.set_defaults(func=cmd_ui)
 
     up = sub.add_parser("update")
     up.add_argument("manifest", nargs="?", help="清单 URL / 本地路径；用 --github 时可省略")

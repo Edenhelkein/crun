@@ -17,9 +17,49 @@ import sys
 DATA_FILES = ("ledger.json", "policy.json", "routes.json", "state.json")
 STATUS_RANK = {"clean": 0, "watch": 1, "flagged": 2, "banned": 3}
 
+# 旧版工具叫法五花八门，按名字里出现的关键词找目录
+KEYWORDS = ("校园跑", "步道", "乐跑", "跑步", "助手", "健康跑", "跑跑", "crun",
+            "pao", "run", "sport", "fitness", "jog")
+SKIP = {"windows", "$recycle.bin", "system volume information", "programdata",
+        "node_modules", ".git", "appdata\\local\\packages", "__pycache__"}
+
 
 def _env(name, default=""):
     return os.environ.get(name, default)
+
+
+def _keyword_dirs(max_depth=2, budget_s=6.0):
+    """按关键词在用户目录和磁盘顶层找旧版目录（带时间预算，别让安装卡住）。"""
+    import time
+    t0 = time.time()
+    roots = [os.path.join(_env("USERPROFILE"), "Desktop"),
+             os.path.join(_env("USERPROFILE"), "Downloads"),
+             os.path.join(_env("USERPROFILE"), "Documents"),
+             _env("USERPROFILE"),
+             _env("LOCALAPPDATA"),
+             _env("APPDATA")]
+    for d in ("C:\\", "D:\\", "E:\\", "F:\\"):
+        if os.path.isdir(d):
+            roots.append(d)
+    found = []
+    seen = set()
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            continue
+        for cur, dirs, _files in os.walk(root):
+            if time.time() - t0 > budget_s:
+                return found
+            depth = cur[len(root):].count(os.sep)
+            if depth >= max_depth:
+                dirs[:] = []
+            dirs[:] = [d for d in dirs if d.lower() not in SKIP and not d.startswith(".")]
+            low = os.path.basename(cur).lower()
+            if cur != root and any(k in low for k in KEYWORDS):
+                real = os.path.normcase(os.path.abspath(cur))
+                if real not in seen:
+                    seen.add(real)
+                    found.append(cur)
+    return found
 
 
 def _reg_install_locations():
@@ -81,6 +121,10 @@ def candidate_dirs(extra=None):
                     cands.append(p)
         except OSError:
             pass
+    try:
+        cands += _keyword_dirs()
+    except Exception:
+        pass
     if extra:
         cands = list(extra) + cands
     seen, out = set(), []
@@ -118,6 +162,19 @@ def scan(dirs=None):
         sub = os.path.join(d, "out", "session.json")
         if os.path.isfile(sub):
             found["out/session.json"] = os.path.getsize(sub)
+        # 旧版可能不是这几个文件名：把可能的数据库/配置也列出来，好让用户认得
+        try:
+            for fn in os.listdir(d):
+                low = fn.lower()
+                if low in found or low in ("out",):
+                    continue
+                if low.endswith((".db", ".sqlite", ".sqlite3", ".csv")) or low in ("config.json", "settings.json", "user.json"):
+                    found["?" + fn] = os.path.getsize(os.path.join(d, fn))
+        except OSError:
+            pass
+        db = _tsn_candidates(d)
+        if db:
+            found["legacy:s校园跑助手"] = os.path.getsize(db)
         if found:
             report.append({"dir": d, "files": found})
     return report
@@ -200,11 +257,126 @@ def _merge_state(target, src):
     return {"runs": runs[-200:]}, added
 
 
+def _tsn_candidates(d):
+    """旧版"校园跑助手"把数据放在 tsn_data.db（sqlite）。"""
+    try:
+        for fn in os.listdir(d):
+            if fn.lower().endswith((".db", ".sqlite", ".sqlite3")):
+                p = os.path.join(d, fn)
+                try:
+                    import sqlite3
+                    con = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+                    tabs = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
+                    con.close()
+                    if {"tsn_run_path", "tsn_account"} & tabs:
+                        return p
+                except Exception:
+                    continue
+    except OSError:
+        pass
+    return None
+
+
+def _parse_ts(v):
+    """旧库的 created_at 有 int(ms) 也有 'YYYY-MM-DD HH:MM:SS' 文本，都要吃。"""
+    if isinstance(v, (int, float)):
+        return float(v) / 1000.0 if v > 1e11 else float(v)
+    try:
+        import datetime
+        return datetime.datetime.strptime(str(v)[:19], "%Y-%m-%d %H:%M:%S").timestamp()
+    except Exception:
+        return 0.0
+
+
+def import_tsn_db(db_path, target_dir):
+    """把旧版 sqlite 里的路线与账号标识导入新格式。
+
+    - 路线：run_line_path 是 [lon, lat] 点列 -> 换算成新格式（含 geohash7 相邻格指纹）
+    - 账号：只导 student_id / school_id 作为标识；**不导入密码和 token**（那是明文凭证，不该复制）
+    """
+    import sqlite3
+
+    from .geo import geohash_encode, haversine
+    from .routegen import cells_of, edges_of, route_fingerprint
+
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    cur = con.cursor()
+    stats = {"db": db_path, "routes_added": 0, "accounts_added": 0, "schools": 0}
+
+    rt_path = os.path.join(target_dir, "routes.json")
+    routes = (_load_json(rt_path) or {}).get("routes", [])
+    seen = {r.get("fp") for r in routes}
+    try:
+        for rid, scode, srange, line, created in cur.execute(
+                "select run_path_id, school_code, sport_range, run_line_path, created_at from tsn_run_path"):
+            try:
+                raw = json.loads(line)
+                pts = [(float(p[1]), float(p[0])) for p in raw if len(p) >= 2]
+                if len(pts) < 10:
+                    continue
+                fp = route_fingerprint(pts)
+                if fp in seen:
+                    continue
+                dist = sum(haversine(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+                routes.append({"cells": cells_of(pts), "edges": edges_of(pts),
+                               "ts": _parse_ts(created), "fp": fp,
+                               "start_cell": geohash_encode(pts[0][0], pts[0][1], 6),
+                               "distance_m": round(dist, 1), "source": "tsn",
+                               "school_code": scode, "sport_range": srange})
+                seen.add(fp)
+                stats["routes_added"] += 1
+            except Exception:
+                continue
+    except sqlite3.Error:
+        pass
+    if stats["routes_added"]:
+        routes.sort(key=lambda r: r.get("ts", 0))
+        with open(rt_path, "w", encoding="utf-8") as f:
+            json.dump({"routes": routes[-300:]}, f, ensure_ascii=False, indent=2)
+
+    pol_path = os.path.join(target_dir, "policy.json")
+    pol = _load_json(pol_path) or {}
+    accts = pol.setdefault("accounts", {})
+    try:
+        for sid, uid, school_id, uname in cur.execute(
+                "select student_id, user_id, school_id, username from tsn_account"):
+            key = str(uname or sid)
+            if key in accts:
+                continue
+            accts[key] = {"bound_device": None, "bound_since": None, "failed": 0,
+                          "locked_until": 0, "last_login": 0, "devices_seen": [],
+                          "note": "imported from 校园跑助手", "school_id": school_id}
+            stats["accounts_added"] += 1
+    except sqlite3.Error:
+        pass
+    if stats["accounts_added"]:
+        with open(pol_path, "w", encoding="utf-8") as f:
+            json.dump(pol, f, ensure_ascii=False, indent=2)
+    try:
+        stats["schools"] = cur.execute("select count(*) from tsn_school").fetchone()[0]
+    except sqlite3.Error:
+        pass
+    con.close()
+    return stats
+
+
 def merge(target_dir, sources):
     """把 sources 里的数据合并进 target_dir，返回统计。"""
     os.makedirs(target_dir, exist_ok=True)
     stats = {}
     conflicts = []
+
+    # 旧版"校园跑助手"的 sqlite 先导（路线 + 账号标识）
+    tsn = []
+    for s in sources:
+        db = _tsn_candidates(s)
+        if db:
+            try:
+                tsn.append(import_tsn_db(db, target_dir))
+            except Exception as e:
+                tsn.append({"db": db, "error": str(e)})
+    if tsn:
+        stats["legacy_db"] = tsn
 
     led_path = os.path.join(target_dir, "ledger.json")
     led, n = _merge_ledger(_load_json(led_path), None)

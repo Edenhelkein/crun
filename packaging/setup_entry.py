@@ -52,10 +52,10 @@ def _ps(cmd):
                    capture_output=True, text=True)
 
 
-def make_shortcut(lnk, target, workdir):
+def make_shortcut(lnk, target, workdir, args=""):
     _ps("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%s');"
-        "$s.TargetPath='%s';$s.WorkingDirectory='%s';$s.IconLocation='%s';$s.Save()"
-        % (lnk, target, workdir, target))
+        "$s.TargetPath='%s';$s.Arguments='%s';$s.WorkingDirectory='%s';$s.IconLocation='%s';$s.Save()"
+        % (lnk, target, args, workdir, target))
 
 
 def install(dst, import_legacy=True, desktop=True, launch=True, log=print):
@@ -80,7 +80,8 @@ def install(dst, import_legacy=True, desktop=True, launch=True, log=print):
                 migrated["scanned"] = [r["dir"] for r in found]
                 log("已合并 %d 处旧数据" % len(found))
             else:
-                log("没有发现旧版数据")
+                log("没有发现旧版数据（已扫描 %d 个位置：桌面/下载/文档/用户目录/注册表）" % len(dirs))
+                log("如果旧版放在别处，装完后运行：crun migrate --dir <你的旧版目录> --apply")
         except Exception as e:
             log("旧数据迁移跳过：%s" % e)
 
@@ -88,14 +89,14 @@ def install(dst, import_legacy=True, desktop=True, launch=True, log=print):
     start_menu = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs")
     try:
         if os.path.isdir(start_menu):
-            make_shortcut(os.path.join(start_menu, APP_NAME + ".lnk"), exe, dst)
+            make_shortcut(os.path.join(start_menu, APP_NAME + ".lnk"), exe, dst, "ui")
     except Exception as e:
         log("开始菜单快捷方式失败：%s" % e)
     if desktop:
         try:
             desk = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
             if os.path.isdir(desk):
-                make_shortcut(os.path.join(desk, APP_NAME + ".lnk"), exe, dst)
+                make_shortcut(os.path.join(desk, APP_NAME + ".lnk"), exe, dst, "ui")
         except Exception as e:
             log("桌面快捷方式失败：%s" % e)
 
@@ -157,8 +158,8 @@ def gui():
 
     root = tk.Tk()
     root.title("%s 安装程序 %s" % (APP_NAME, APP_VER))
-    root.geometry("520x420")
-    root.resizable(False, False)
+    root.geometry("600x560")
+    root.minsize(600, 520)
     try:
         root.iconbitmap(default=res("icon.ico"))
     except Exception:
@@ -175,20 +176,32 @@ def gui():
     style.configure("TFrame", background=bg)
     style.configure("TLabel", background=bg, foreground=fg)
     style.configure("Hint.TLabel", foreground="#8595a8")
+    style.configure("Title.TLabel", font=("Segoe UI", 22, "bold"))
+    style.configure("Step.TLabel", foreground="#8595a8", font=("Segoe UI", 9))
     style.configure("TCheckbutton", background=bg, foreground=fg)
     style.configure("TEntry", fieldbackground="#0a1017", foreground=fg, insertcolor=fg)
     style.configure("TButton", padding=8)
-    style.configure("Go.TButton", background=accent, foreground="#04140c")
+    style.configure("Go.TButton", background=accent, foreground="#04140c", font=("Segoe UI", 11, "bold"))
     style.map("Go.TButton", background=[("active", "#54e8a2")])
 
-    ttk.Label(root, text=APP_NAME, font=("Segoe UI", 20, "bold")).pack(anchor="w", padx=24, pady=(22, 0))
-    ttk.Label(root, text="校园跑会话控制台 · 版本 %s" % APP_VER, style="Hint.TLabel").pack(anchor="w", padx=24)
+    # ---- 底部按钮栏先 pack(side=bottom)，保证任何窗口尺寸下都可见 ----
+    bar = ttk.Frame(root)
+    bar.pack(side="bottom", fill="x", padx=24, pady=(0, 18))
 
-    frm = ttk.Frame(root); frm.pack(fill="x", padx=24, pady=16)
+    # ---- 顶部 ----
+    head = ttk.Frame(root)
+    head.pack(side="top", fill="x", padx=24, pady=(22, 4))
+    ttk.Label(head, text=APP_NAME, style="Title.TLabel").pack(anchor="w")
+    ttk.Label(head, text="校园跑会话控制台 · 版本 %s" % APP_VER, style="Hint.TLabel").pack(anchor="w")
+
+    # ---- 安装位置 ----
+    frm = ttk.Frame(root)
+    frm.pack(side="top", fill="x", padx=24, pady=(14, 0))
     ttk.Label(frm, text="安装位置").pack(anchor="w")
-    row = ttk.Frame(frm); row.pack(fill="x", pady=(4, 0))
+    row = ttk.Frame(frm)
+    row.pack(fill="x", pady=(4, 0))
     path_var = tk.StringVar(value=default_dir())
-    ent = ttk.Entry(row, textvariable=path_var); ent.pack(side="left", fill="x", expand=True)
+    ttk.Entry(row, textvariable=path_var).pack(side="left", fill="x", expand=True)
 
     def browse():
         p = filedialog.askdirectory(initialdir=path_var.get())
@@ -196,34 +209,54 @@ def gui():
             path_var.set(p)
     ttk.Button(row, text="浏览…", command=browse).pack(side="left", padx=(8, 0))
 
-    opt = ttk.Frame(root); opt.pack(fill="x", padx=24)
-    legacy = tk.BooleanVar(value=True); desk = tk.BooleanVar(value=True); run = tk.BooleanVar(value=True)
+    # ---- 选项 ----
+    opt = ttk.Frame(root)
+    opt.pack(side="top", fill="x", padx=24, pady=(14, 0))
+    ttk.Label(opt, text="安装选项", style="Step.TLabel").pack(anchor="w", pady=(0, 4))
+    legacy = tk.BooleanVar(value=True)
+    desk = tk.BooleanVar(value=True)
+    run = tk.BooleanVar(value=True)
     ttk.Checkbutton(opt, text="导入旧版数据（账本 / 路线库 / 账号绑定）", variable=legacy).pack(anchor="w")
     ttk.Checkbutton(opt, text="创建桌面快捷方式", variable=desk).pack(anchor="w")
     ttk.Checkbutton(opt, text="安装完成后启动", variable=run).pack(anchor="w")
 
-    log_box = tk.Text(root, height=7, bg="#0a1017", fg="#8595a8", bd=0, font=("Consolas", 9))
-    log_box.pack(fill="both", expand=True, padx=24, pady=12)
+    # ---- 日志（可伸缩）----
+    log_box = tk.Text(root, height=6, bg="#0a1017", fg="#8595a8", bd=0,
+                      font=("Consolas", 9), wrap="word")
+    log_box.pack(side="top", fill="both", expand=True, padx=24, pady=(12, 8))
+    log_box.insert("end", "点右下角「开始安装」即可，全程无需管理员权限。\n")
+    log_box.configure(state="disabled")
 
     def log(msg):
-        log_box.insert("end", msg + "\n"); log_box.see("end"); root.update_idletasks()
+        log_box.configure(state="normal")
+        log_box.insert("end", msg + "\n")
+        log_box.see("end")
+        log_box.configure(state="disabled")
+        root.update_idletasks()
 
     def go():
         btn.state(["disabled"])
+        btn.configure(text="安装中…")
         try:
             r = install(path_var.get(), legacy.get(), desk.get(), run.get(), log)
             log("安装完成：" + r["dir"])
             if r.get("migrated"):
-                log("旧数据：" + json.dumps(r["migrated"].get("scanned", []), ensure_ascii=False))
-            messagebox.showinfo("安装完成", "已安装到\n%s" % r["dir"])
-            root.destroy()
+                log("已合并旧数据：" + ", ".join(r["migrated"].get("scanned", [])))
+            if run.get():
+                log("正在启动…")
+            messagebox.showinfo("安装完成", "已安装到\n%s\n\n桌面已创建快捷方式。" % r["dir"])
+            root.after(300, root.destroy)
         except Exception as e:
-            log("失败：%s" % e)
+            log("失败：" + str(e))
             messagebox.showerror("安装失败", str(e))
+            btn.configure(text="重试")
             btn.state(["!disabled"])
 
-    btn = ttk.Button(root, text="开始安装", style="Go.TButton", command=go)
-    btn.pack(fill="x", padx=24, pady=(0, 20))
+    ttk.Label(bar, text="安装到当前用户目录，不修改系统环境变量",
+              style="Step.TLabel").pack(side="left")
+    btn = ttk.Button(bar, text="开始安装", style="Go.TButton", command=go, width=18)
+    btn.pack(side="right")
+
     root.mainloop()
 
 
