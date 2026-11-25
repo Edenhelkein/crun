@@ -1,0 +1,10 @@
+{
+  "host::DEFAULT": {
+    "brand": "Redmi",
+    "model": "2409BRN2CC",
+    "osver": "14",
+    "a_list": "arm64-v8a,armeabi-v7a",
+    "android_id": "96482f740870aaab",
+    "device_name": "2409BRN2CC"
+  }
+}

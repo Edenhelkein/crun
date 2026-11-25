@@ -1,0 +1,84 @@
+('E:\\DeepSeek\\campus-run-assistant\\build_diag\\crun_diag\\crun-con.exe',
+ True,
+ False,
+ True,
+ ['E:\\DeepSeek\\campus-run-assistant\\packaging\\crun.ico'],
+ versioninfo.VSVersionInfo(ffi=versioninfo.FixedFileInfo(filevers=(1, 2, 2, 0), prodvers=(1, 2, 2, 0), mask=0x3f, flags=0x0, OS=0x40004, fileType=1, subtype=0x0, date=(0, 0)), kids=[versioninfo.StringFileInfo([versioninfo.StringTable('080404B0', [versioninfo.StringStruct('CompanyName', 'CRUN Studio'), versioninfo.StringStruct('FileDescription', 'CRUN 校园跑会话控制台'), versioninfo.StringStruct('FileVersion', '1.2.2.0'), versioninfo.StringStruct('InternalName', 'crun'), versioninfo.StringStruct('LegalCopyright', 'Copyright (C) 2026 CRUN Studio'), versioninfo.StringStruct('OriginalFilename', 'crun.exe'), versioninfo.StringStruct('ProductName', 'CRUN'), versioninfo.StringStruct('ProductVersion', '1.2.2.0'), versioninfo.StringStruct('Comments', 'https://TARGET.example/crun/')])]), versioninfo.VarFileInfo([versioninfo.VarStruct('Translation', [2052, 1200])])]),
+ False,
+ False,
+ b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<assembly xmlns='
+ b'"urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">\n  <assemblyIde'
+ b'ntity type="win32" name="CRUN.Studio.CRUN" version="1.2.2.0" processorArchit'
+ b'ecture="amd64"/>\n  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">\n'
+ b'    <security>\n      <requestedPrivileges>\n        <!-- \xe5\x85\xb3\xe9'
+ b'\x94\xae\xef\xbc\x9aasInvoker \xe8\x80\x8c\xe4\xb8\x8d\xe6\x98\xaf require'
+ b'Administrator\xe3\x80\x82\xe8\xa6\x81\xe7\xae\xa1\xe7\x90\x86\xe5\x91\x98'
+ b'\xe6\x9d\x83\xe9\x99\x90\xe7\x9a\x84 exe \xe4\xbc\x9a\xe5\x8f\xa0'
+ b'\xe5\x8a\xa0\xe4\xb8\x80\xe5\xb1\x82 UAC \xe5\x90\xaf\xe5\x8f\x91'
+ b'\xe5\xbc\x8f -->\n        <requestedExecutionLevel level="asInvoker" uiAcc'
+ b'ess="false"/>\n      </requestedPrivileges>\n    </security>\n  </trustInfo'
+ b'>\n  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">\n '
+ b'   <application>\n      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a'
+ b'15a9a}"/>\n      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"'
+ b'/>\n    </application>\n  </compatibility>\n  <application xmlns="urn:schem'
+ b'as-microsoft-com:asm.v3">\n    <windowsSettings>\n      <dpiAware xmlns="h'
+ b'ttp://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>'
+ b'\n      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/Window'
+ b'sSettings">permonitorv2</dpiAwareness>\n      <longPathAware xmlns="http:'
+ b'//schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>\n '
+ b'   </windowsSettings>\n  </application>\n  <dependency>\n    <dependentAsse'
+ b'mbly>\n      <assemblyIdentity type="win32" name="Microsoft.Windows.Commo'
+ b'n-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595'
+ b'b64144ccf1df" language="*"/>\n    </dependentAssembly>\n  </dependency>\n</'
+ b'assembly>',
+ True,
+ False,
+ None,
+ None,
+ None,
+ 'E:\\DeepSeek\\campus-run-assistant\\build_diag\\crun_diag\\crun-con.pkg',
+ [('pyi-contents-directory _internal', '', 'OPTION'),
+  ('PYZ-00.pyz',
+   'E:\\DeepSeek\\campus-run-assistant\\build_diag\\crun_diag\\PYZ-00.pyz',
+   'PYZ'),
+  ('struct',
+   'E:\\DeepSeek\\campus-run-assistant\\build_diag\\crun_diag\\localpycs\\struct.pyc',
+   'PYMODULE'),
+  ('pyimod01_archive',
+   'E:\\DeepSeek\\campus-run-assistant\\build_diag\\crun_diag\\localpycs\\pyimod01_archive.pyc',
+   'PYMODULE'),
+  ('pyimod02_importers',
+   'E:\\DeepSeek\\campus-run-assistant\\build_diag\\crun_diag\\localpycs\\pyimod02_importers.pyc',
+   'PYMODULE'),
+  ('pyimod03_ctypes',
+   'E:\\DeepSeek\\campus-run-assistant\\build_diag\\crun_diag\\localpycs\\pyimod03_ctypes.pyc',
+   'PYMODULE'),
+  ('pyimod04_pywin32',
+   'E:\\DeepSeek\\campus-run-assistant\\build_diag\\crun_diag\\localpycs\\pyimod04_pywin32.pyc',
+   'PYMODULE'),
+  ('pyiboot01_bootstrap',
+   'E:\\DeepSeek\\campus-run-assistant\\.pylibs\\PyInstaller\\loader\\pyiboot01_bootstrap.py',
+   'PYSOURCE'),
+  ('pyi_rth__tkinter',
+   'E:\\DeepSeek\\campus-run-assistant\\.pylibs\\PyInstaller\\hooks\\rthooks\\pyi_rth__tkinter.py',
+   'PYSOURCE'),
+  ('pyi_rth_pkgutil',
+   'E:\\DeepSeek\\campus-run-assistant\\.pylibs\\PyInstaller\\hooks\\rthooks\\pyi_rth_pkgutil.py',
+   'PYSOURCE'),
+  ('pyi_rth_inspect',
+   'E:\\DeepSeek\\campus-run-assistant\\.pylibs\\PyInstaller\\hooks\\rthooks\\pyi_rth_inspect.py',
+   'PYSOURCE'),
+  ('pyi_rth_multiprocessing',
+   'E:\\DeepSeek\\campus-run-assistant\\.pylibs\\PyInstaller\\hooks\\rthooks\\pyi_rth_multiprocessing.py',
+   'PYSOURCE'),
+  ('entry',
+   'E:\\DeepSeek\\campus-run-assistant\\packaging\\entry.py',
+   'PYSOURCE')],
+ [],
+ False,
+ False,
+ 1795586389,
+ [('run.exe',
+   'E:\\DeepSeek\\campus-run-assistant\\.pylibs\\PyInstaller\\bootloader\\Windows-64bit-intel\\run.exe',
+   'EXECUTABLE')],
+ 'C:\\Users\\senyu\\.dsh\\dsh-runtimes\\dsh-primary-runtime\\dependencies\\python\\python312.dll')
