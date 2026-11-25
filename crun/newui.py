@@ -3,6 +3,7 @@
 所有动作直接调用原版 SDK（crun.bridge），不再需要打开原版窗口。
 """
 import os
+import shutil
 import sqlite3
 import sys
 import threading
@@ -69,6 +70,15 @@ class App(ctk.CTk):
         except OSError:
             pass
         self.store = Store(self.dir)
+        self.db_state = "ok"
+        try:
+            from . import bridge
+            # 每次启动先留一份备份，再把被删空的库自愈回来
+            if os.path.exists(self.store.db) and os.path.getsize(self.store.db) > 0:
+                shutil.copyfile(self.store.db, os.path.join(self.dir, "tsn_data.backup-latest.db"))
+            self.db_state = bridge.ensure_db(self.store.db, log=lambda m: None)
+        except Exception:
+            self.db_state = "ok"
         self.page = "prep"
         ctk.set_appearance_mode("dark")
         self.title("校园跑助手")
@@ -207,6 +217,9 @@ class App(ctk.CTk):
         logc.pack_propagate(False)
         self.lbl(logc, "运行日志", size=12, bold=True).place(x=self.X(18), y=self.X(10))
         self.log_prep = self.logbox(logc, 14, 36, 888, 200)
+        if getattr(self, "db_state", "ok") != "ok":
+            self.say(self.log_prep, "⚠ 本地数据库缺失或损坏，已自动恢复到：%s" % self.db_state)
+            self.say(self.log_prep, "   如果账号不见了，用学号+密码重新授权一次即可。")
         self.say(self.log_prep, "就绪。数据目录：%s" % self.dir)
 
     # ---------------------------------------------------------------- 跑步页

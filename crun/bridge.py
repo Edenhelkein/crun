@@ -38,6 +38,53 @@ def _run(coro):
             loop.close()
 
 
+def ensure_db(db_path=None, log=print):
+    """数据库被删/被清空时自愈：先用随包种子恢复，再不行就建空表。
+
+    之前数据目录被清掉后，sqlite3.connect 会就地建一个 0 字节文件，
+    于是第一条 insert 就报 "no such table: tsn_school"。
+    """
+    db_path = db_path or os.path.join(os.getcwd(), "tsn_data.db")
+    ok = os.path.exists(db_path) and os.path.getsize(db_path) > 0
+    if ok:
+        try:
+            import sqlite3
+            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            names = [r[0] for r in con.execute("select name from sqlite_master where type='table'")]
+            con.close()
+            ok = "tsn_school" in names and "tsn_account" in names
+        except Exception:
+            ok = False
+    if ok:
+        return "ok"
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base = getattr(sys, "_MEIPASS", None) or here
+    import glob
+    import shutil
+    # 先用本地自动备份（里面才有账号），再用随包种子
+    backups = sorted(glob.glob(os.path.join(os.path.dirname(db_path), "tsn_data.backup-*.db")),
+                     reverse=True)
+    seeds = backups + [os.path.join(base, "assets", "tsn_data.db")]
+    for s in seeds:
+        if os.path.exists(s) and os.path.getsize(s) > 0:
+            shutil.copyfile(s, db_path)
+            log("本地数据库缺失/损坏，已从 %s 恢复" % os.path.basename(s))
+            return "restored" if "backup" not in s else "restored-backup"
+    # 连种子都没有：建空表，至少不报 "no such table"
+    try:
+        import sqlite3
+        import models as _m
+        con = sqlite3.connect(db_path)
+        _m.Base.metadata.create_all(con)
+        con.commit()
+        con.close()
+        log("本地数据库为空，已重建表结构: %s" % db_path)
+        return "created"
+    except Exception as e:
+        log("数据库自愈失败: %s" % e)
+        return "failed"
+
+
 def _private(account=None):
     from TiShiNengSdkPrivate import TiShiNengPrivate
     if account is None:
