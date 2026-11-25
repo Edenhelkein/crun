@@ -165,6 +165,16 @@ def update_schools(db_path, log=print, only_provinces=None):
     return stat
 
 
+def query_stats(account_id, log=print):
+    """查有效次数/里程。用的是原版同一个 validCountServer。"""
+    ensure_paths()
+    import validCountServer as V
+    res = _run(V.crawl_valid_count_for_account(account_id))
+    out = {k: getattr(res, k, None) for k in V.ValidRunCount.__dataclass_fields__}
+    log("查询完成：有效 %s 次 / %.2f km" % (out.get("total_valid_count"), out.get("total_distance_km") or 0))
+    return out
+
+
 def crawl_paths(account_id, log=print):
     ensure_paths()
     from tsnRunServer import TsnRunServer, TsnRunType

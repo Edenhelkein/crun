@@ -63,6 +63,11 @@ class App(ctk.CTk):
     def __init__(self, d=None):
         super().__init__()
         self.dir = d or data_dir()
+        try:                       # 原版 SDK 用相对路径读 tsn_data.db，工作目录必须是数据目录
+            os.makedirs(self.dir, exist_ok=True)
+            os.chdir(self.dir)
+        except OSError:
+            pass
         self.store = Store(self.dir)
         self.page = "prep"
         ctk.set_appearance_mode("dark")
@@ -271,8 +276,8 @@ class App(ctk.CTk):
 
     # ---------------------------------------------------------------- 查询页
     def _p_query(self):
-        self.head("查询", "看有效次数和里程")
-        c = self.card(self.body, width=self.X(916), height=self.X(200))
+        self.head("查询", "联网查官方记录：有效次数、里程")
+        c = self.card(self.body, width=self.X(916), height=self.X(120))
         c.place(x=self.X(28), y=self.X(88))
         c.pack_propagate(False)
         accs = [a["username"] for a in self.store.accounts] or ["—"]
@@ -280,8 +285,16 @@ class App(ctk.CTk):
                                          button_color=P["accent"], text_color=P["text"], font=(FONT, 12))
         self.opt_acc.place(x=self.X(20), y=self.X(18))
         self.btn(c, "查询", cmd=self.on_query, primary=True, w=110).place(x=self.X(260), y=self.X(18))
-        self.q_result = self.lbl(c, "尚未查询", size=12, dim=True, justify="left")
-        self.q_result.place(x=self.X(20), y=self.X(70))
+        self.q_state = self.lbl(c, "点查询开始", size=11, dim=True)
+        self.q_state.place(x=self.X(390), y=self.X(26))
+
+        self.tiles = ctk.CTkFrame(self.body, fg_color="transparent", width=self.X(916), height=self.X(120))
+        self.tiles.place(x=self.X(28), y=self.X(224))
+        self.q_body = self.card(self.body, width=self.X(916), height=self.X(300))
+        self.q_body.place(x=self.X(28), y=self.X(360))
+        self.q_body.pack_propagate(False)
+        self.q_result = self.lbl(self.q_body, "尚未查询", size=12, dim=True, justify="left")
+        self.q_result.place(x=self.X(20), y=self.X(18))
 
     # ---------------------------------------------------------------- 动作
     def _log(self, box):
@@ -426,12 +439,56 @@ class App(ctk.CTk):
         self.bg(job)
 
     def on_query(self):
-        acc = self.opt_acc.get()
-        rows = self.store.q("select count(*), coalesce(sum(sport_range),0) from tsn_run_path")
-        n, dist = rows[0] if rows else (0, 0)
-        self.q_result.configure(
-            text="账号 %s\n路线 %d 条 · 合计 %.2f km\n（联网查询有效次数待接入）" % (acc, n, float(dist or 0)),
-            text_color=P["text"])
+        user = self.opt_acc.get()
+        acc = next((a for a in self.store.accounts if a["username"] == user), None)
+        if not acc:
+            self.q_state.configure(text="没找到这个账号", text_color=P["bad"])
+            return
+        self.q_state.configure(text="查询中…", text_color=P["warn"])
+        for w in self.tiles.winfo_children():
+            w.destroy()
+
+        def job():
+            from . import bridge
+            try:
+                st = bridge.query_stats(acc["id"], log=lambda m: None)
+                self.after(0, self._show_stats, acc, st)
+            except Exception as e:
+                msg = str(e)
+                self.after(0, self._query_failed, msg)
+        self.bg(job)
+
+    def _query_failed(self, msg):
+        self.q_state.configure(text="失败", text_color=P["bad"])
+        hint = ""
+        if "Wrong password" in msg or "重新登录" in msg:
+            hint = ("\n\n这个账号的密码在本地库里对不上了。去「准备」页用学号+密码"
+                    "重新授权一次，再回来查询。")
+        self.q_result.configure(text="查询失败：" + msg + hint, text_color=P["bad"])
+
+    def _show_stats(self, acc, st):
+        self.q_state.configure(text="查询完成", text_color=P["ok"])
+        tiles = [("晨跑", st.get("morning_run_count")),
+                 ("阳光跑", st.get("sun_run_count")),
+                 ("自由跑", st.get("freedom_run_count"))]
+        for i, (name, val) in enumerate(tiles):
+            c = self.card(self.tiles, width=self.X(296), height=self.X(120))
+            c.place(x=self.X(i * 312), y=0)
+            c.pack_propagate(False)
+            self.lbl(c, name, size=11, dim=True).place(x=self.X(18), y=self.X(14))
+            self.lbl(c, str(val if val is not None else "—"), size=26, bold=True).place(
+                x=self.X(18), y=self.X(40))
+            self.lbl(c, "有效次数", size=10, dim=True).place(x=self.X(18), y=self.X(86))
+
+        lines = [("账号", acc["username"]),
+                 ("总有效次数", st.get("total_valid_count")),
+                 ("总里程", "%.2f km" % float(st.get("total_distance_km") or 0)),
+                 ("总跑步次数", st.get("total_run_count"))]
+        if st.get("valid_records_count") is not None:
+            lines.append(("有记录条数", "%s / %s" % (st.get("valid_records_count"),
+                                                st.get("total_records_count"))))
+        text = "\n\n".join("%s：%s" % (k, v) for k, v in lines if v is not None)
+        self.q_result.configure(text=text, text_color=P["text"])
 
 
 def main(argv=None):
