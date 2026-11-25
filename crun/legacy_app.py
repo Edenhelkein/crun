@@ -34,24 +34,68 @@ def prepare_path():
     return bundled, ext
 
 
+def _count_accounts(db):
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        n = con.execute("select count(*) from tsn_account").fetchone()[0]
+        con.close()
+        return n
+    except Exception:
+        return -1
+
+
+def _legacy_databases(bundled, ext):
+    """找旧安装里的 tsn_data.db（账号/路线都在里面）。"""
+    found = []
+    for d in ext:
+        for src in (os.path.join(d, "tsn_data.db"), os.path.join(os.path.dirname(d), "tsn_data.db")):
+            if os.path.exists(src):
+                found.append(src)
+    for d in bundled:
+        src = os.path.join(d, "tsn_data.db")
+        if os.path.exists(src):
+            found.append(src)
+    try:
+        from .migrate import _keyword_dirs
+        for d in _keyword_dirs(max_depth=2, budget_s=4.0):
+            src = os.path.join(d, "tsn_data.db")
+            if os.path.exists(src):
+                found.append(src)
+    except Exception:
+        pass
+    return found
+
+
 def ensure_data_dir(data_dir, legacy_dirs):
     """原版把 tsn_data.db / device_profiles.json 当相对路径用，先把它们准备好。"""
     os.makedirs(data_dir, exist_ok=True)
     db = os.path.join(data_dir, "tsn_data.db")
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     base = getattr(sys, "_MEIPASS", None) or here
+    stamp = __import__("time").strftime("%Y%m%d-%H%M%S")
+
+    # 1) 用旧安装的库优先（里面才有账号和路线）；只有找不到时才放干净的学校库
+    old_dbs = [p for p in _legacy_databases(legacy_dirs[:2] if legacy_dirs else [], legacy_dirs)
+               if _count_accounts(p) > 0]
+    if not old_dbs or not os.path.exists(db) or _count_accounts(db) == 0:
+        for src in old_dbs:
+            if os.path.abspath(src) == os.path.abspath(db):
+                break
+            try:
+                if os.path.exists(db):
+                    shutil.copyfile(db, db.replace(".db", ".backup-%s.db" % stamp))
+                shutil.copyfile(src, db)
+                _boot_log("已从旧安装导入数据库: %s" % src, data_dir)
+                break
+            except OSError:
+                continue
 
     if not os.path.exists(db):
         for cand in (os.path.join(base, "assets", "tsn_data.db"), os.path.join(here, "assets", "tsn_data.db")):
             if os.path.exists(cand):
                 shutil.copyfile(cand, db)
                 break
-        else:
-            for d in legacy_dirs:
-                for src in (os.path.join(d, "tsn_data.db"), os.path.join(os.path.dirname(d), "tsn_data.db")):
-                    if os.path.exists(src):
-                        shutil.copyfile(src, db)
-                        break
 
     # 设备指纹文件：原版读 device_profiles.json，缺了会报 Errno 2
     prof = os.path.join(data_dir, "device_profiles.json")
@@ -121,6 +165,80 @@ def apply_patches(log=print):
         if getattr(mod, "genTiShiNengRunPathRepeat", None) is orig:
             setattr(mod, "genTiShiNengRunPathRepeat", patched)
     log("[增强] 已启用路线平滑与转角自检")
+
+    # 上传前自审：把要提交的轨迹先算一遍，别把明显异常的数据送上去
+    try:
+        _patch_upload_guard(S, log)
+    except Exception as e:
+        log("[增强] 上传自审挂载失败（不影响原功能）：%s" % e)
+
+
+def _points_of(path):
+    """尽量把原版的 path 结构解析成 [(lat, lon, t?)]。"""
+    pts = []
+    if isinstance(path, dict):
+        path = path.get("points") or path.get("pointList") or path.get("path") or []
+    for p in path or []:
+        try:
+            if isinstance(p, dict):
+                lat = p.get("latitude", p.get("lat"))
+                lon = p.get("longitude", p.get("lng", p.get("lon")))
+                t = p.get("timestamp", p.get("time"))
+            else:
+                lat, lon = p[0], p[1]
+                t = p[2] if len(p) > 2 else None
+            if lat is None or lon is None:
+                continue
+            pts.append((float(lat), float(lon), float(t) if t is not None else None))
+        except Exception:
+            continue
+    return pts
+
+
+def _patch_upload_guard(S, log):
+    cls = getattr(S, "TsnRunServer", None)
+    if cls is None or not hasattr(cls, "uploadRunPath"):
+        return
+    orig_upload = cls.uploadRunPath
+
+    def uploadRunPath(self, path, stepNumbers, sumDistance, *a, **kw):
+        try:
+            pts = _points_of(path)
+            if len(pts) > 10:
+                from .routegen import route_max_turn
+                from .geo import haversine
+                turn = route_max_turn([(p[0], p[1]) for p in pts], 10.0)
+                dist = sum(haversine(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+                dur = None
+                ts = [p[2] for p in pts if p[2]]
+                if len(ts) > 2:
+                    dur = max(ts) - min(ts)
+                speed = (dist / dur) if dur and dur > 0 else None
+                step_ratio = (float(stepNumbers) * 0.75 / dist) if dist > 0 and stepNumbers else None
+                log("[自审] 上传前：%d 点 / %.0f 米 / 最大转角 %.1f°%s%s" % (
+                    len(pts), dist, turn,
+                    " / 均速 %.2f m/s" % speed if speed else "",
+                    " / 步数比 %.2f" % step_ratio if step_ratio else ""))
+                bad = []
+                if turn > 60:
+                    bad.append("转角 %.0f°" % turn)
+                if speed and speed > 8.0:
+                    bad.append("均速 %.2f m/s" % speed)
+                if step_ratio and not (0.6 <= step_ratio <= 1.6):
+                    bad.append("步数比 %.2f" % step_ratio)
+                if bad:
+                    msg = "轨迹自审异常：" + "，".join(bad)
+                    log("[自审] " + msg)
+                    if os.environ.get("CRUN_STRICT") == "1":
+                        raise RuntimeError(msg + "（CRUN_STRICT=1，已拦截上传）")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            log("[自审] 检查失败（放行）：%s" % e)
+        return orig_upload(self, path, stepNumbers, sumDistance, *a, **kw)
+
+    cls.uploadRunPath = uploadRunPath
+    log("[增强] 已挂载上传前自审（默认只记录，CRUN_STRICT=1 时拦截）")
 
 
 def _writable(d):
