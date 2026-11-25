@@ -226,10 +226,10 @@ def cmd_version(a):
 
 
 def main(argv=None):
-    # 双击 exe（无参数）直接开桌面界面
+    # 双击 exe（无参数）直接开原版界面（带增强），这是用户要的"原版优化版"
     if argv is None and len(sys.argv) == 1:
-        from .gui import main as gui_main
-        return gui_main()
+        from .legacy_app import main as legacy_main
+        return legacy_main()
     p = argparse.ArgumentParser(prog="crun")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -286,6 +286,11 @@ def main(argv=None):
 
     gp = sub.add_parser("gui"); gp.add_argument("--work-dir", default=None)
     gp.set_defaults(func=lambda a: __import__("crun.gui", fromlist=["main"]).main(a.work_dir))
+
+    lg = sub.add_parser("legacy", help="启动原版图形界面（带增强补丁）")
+    lg.add_argument("--data-dir", default=None)
+    lg.set_defaults(func=lambda a: __import__("crun.legacy_app", fromlist=["main"]).main(
+        ["--data-dir", a.data_dir] if a.data_dir else []))
 
     up = sub.add_parser("update")
     up.add_argument("manifest", nargs="?", help="清单 URL / 本地路径；用 --github 时可省略")

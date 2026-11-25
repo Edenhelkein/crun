@@ -20,8 +20,10 @@ a = Analysis(
     datas=[
         (os.path.join(ROOT, 'crun', 'hooks.js'), 'crun'),
         (os.path.join(ROOT, 'crun', 'ui', 'index.html'), 'crun/ui'),
-    ] + collect_data_files('customtkinter'),
-    hiddenimports=['customtkinter', 'darkdetect', 'sqlite3'] + collect_submodules('customtkinter'),
+        (os.path.join(ROOT, 'assets', 'tsn_data.db'), 'assets'),
+    ] + collect_data_files('customtkinter')
+      + [(os.path.join(ROOT, 'legacy'), 'legacy'), (os.path.join(ROOT, 'legacy_site'), 'legacy_site')],
+    hiddenimports=['customtkinter', 'darkdetect', 'sqlite3', 'sysconfig'] + collect_submodules('customtkinter'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
