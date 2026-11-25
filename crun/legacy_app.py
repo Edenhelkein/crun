@@ -127,6 +127,24 @@ def _boot_log(msg, data_dir=None):
         pass
 
 
+def _polish_ui():
+    """套一层更好看的主题：深色 + 绿色强调色 + 高 DPI 清晰字体。"""
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+    try:
+        import customtkinter as ctk
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("green")
+    except Exception:
+        pass
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     data_dir = None
@@ -139,6 +157,7 @@ def main(argv=None):
             i += 1
 
     _boot_log("start", data_dir)
+    _polish_ui()
     bundled, ext = prepare_path()
     _boot_log("legacy paths: %s" % (bundled or ext))
     data_dir = data_dir or _default_data_dir()
