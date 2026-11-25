@@ -183,11 +183,35 @@ def update_face(account_id, log=print):
     return res
 
 
-def run(account_id, km, run_type, minutes=None, cadence=None, log=print):
+def run(account_id, km, run_type, minutes=None, cadence=None, log=print, on_progress=None):
+    """跑一次。on_progress(文本) 会实时收到原版 logger 的每一行（配速/等待/剩余）。"""
     ensure_paths()
+    import logging
     from tsnRunServer import TsnRunServer
-    srv = TsnRunServer(account_id, float(km), run_type, minutes, cadence)
-    log("开始跑步：%.2f km" % float(km))
-    res = _run(srv.startRun())
-    log("跑步结束：%s" % str(res)[:120])
-    return res
+
+    class _Sink(logging.Handler):
+        def emit(self, rec):
+            try:
+                on_progress(self.format(rec))
+            except Exception:
+                pass
+
+    handler = _Sink()
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
+    root = logging.getLogger()
+    old_level = root.level
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+    try:
+        srv = TsnRunServer(account_id, float(km), run_type, minutes, cadence)
+        log("开始跑步：%.2f km" % float(km))
+        res = _run(srv.startRun())
+        log("跑步结束：%s" % str(res)[:200])
+        return res
+    finally:
+        try:
+            root.removeHandler(handler)
+            root.setLevel(old_level)
+        except Exception:
+            pass

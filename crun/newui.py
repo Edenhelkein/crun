@@ -6,6 +6,7 @@ import os
 import sqlite3
 import sys
 import threading
+import time
 
 import customtkinter as ctk
 
@@ -248,11 +249,25 @@ class App(ctk.CTk):
         self.btn(c, "开始跑步", cmd=self.on_run, primary=True, w=160, h=44).place(x=self.X(20), y=self.X(240))
         self.lbl(c, "0 表示交给程序按距离自动算", size=10, dim=True).place(x=self.X(200), y=self.X(252))
 
+        self.status_dot = self.lbl(c, "● 待机", size=13, bold=True, color=P["dim"])
+        self.status_dot.place(x=self.X(600), y=self.X(246))
+        self.status_time = self.lbl(c, "00:00", size=13, bold=True)
+        self.status_time.place(x=self.X(760), y=self.X(246))
+        self.status_bar = ctk.CTkProgressBar(c, width=self.X(916 - 40), height=self.X(6),
+                                             progress_color=P["accent"], fg_color=P["surface2"],
+                                             mode="indeterminate")
+        self.status_bar.place(x=self.X(20), y=self.X(286))
+        self.status_bar.set(0)
+
         logc = self.card(self.body, width=self.X(916), height=self.X(300))
         logc.place(x=self.X(28), y=self.X(404))
         logc.pack_propagate(False)
         self.lbl(logc, "运行日志", size=12, bold=True).place(x=self.X(18), y=self.X(10))
         self.log_run = self.logbox(logc, 14, 36, 888, 250)
+        if not self.store.routes:
+            self.say(self.log_run, "⚠ 本地还没有跑步路线。先去「准备」页点『爬取路径』，"
+                                   "爬到至少一条路线，这里才能开跑。")
+            self.set_status("无路线", P["warn"])
 
     # ---------------------------------------------------------------- 查询页
     def _p_query(self):
@@ -271,6 +286,41 @@ class App(ctk.CTk):
     # ---------------------------------------------------------------- 动作
     def _log(self, box):
         return lambda m: self.after(0, self.say, box, str(m))
+
+    def set_status(self, text, color=None):
+        try:
+            self.status_dot.configure(text="● " + text, text_color=color or P["text"])
+        except Exception:
+            pass
+
+    def _tick(self):
+        if not getattr(self, "running", False):
+            return
+        el = int(time.monotonic() - self.run_start)
+        try:
+            self.status_time.configure(text="%02d:%02d" % (el // 60, el % 60))
+        except Exception:
+            return
+        self.after(500, self._tick)
+
+    def _on_progress(self, line):
+        self.say(self.log_run, line)
+        if getattr(self, "running", False):
+            self.set_status("跑步中", P["ok"])
+
+    def _finish(self, ok, err):
+        self.running = False
+        try:
+            self.status_bar.stop()
+            self.status_bar.set(1 if ok else 0)
+        except Exception:
+            pass
+        if ok:
+            self.set_status("完成", P["ok"])
+            self.say(self.log_run, "✅ 本次跑步结束")
+        else:
+            self.set_status("失败", P["bad"])
+            self.say(self.log_run, "❌ " + err)
 
     def on_schools(self):
         log = self._log(self.log_prep)
@@ -332,6 +382,13 @@ class App(ctk.CTk):
 
     def on_run(self):
         log = self._log(self.log_run)
+        if getattr(self, "running", False):
+            log("已经在跑了，等它结束")
+            return
+        if not self.store.routes:
+            self.set_status("无路线", P["warn"])
+            log("⚠ 本地没有跑步路线，先去「准备」页点『爬取路径』")
+            return
         name = self.seg.get()
         key = next(k for k, cn, _ in MODES if cn == name)
         try:
@@ -339,18 +396,33 @@ class App(ctk.CTk):
             minutes = float(self.ent_min.get().strip() or 0) or None
             cadence = float(self.ent_cad.get().strip() or 0) or None
         except ValueError:
-            log("参数填得不对")
+            self.set_status("参数错误", P["bad"])
+            log("参数填得不对（距离/时间/步频要写数字）")
             return
+
+        self.running = True
+        self.run_start = time.monotonic()
+        self.set_status("启动中…", P["warn"])
+        try:
+            self.status_time.configure(text="00:00")
+            self.status_bar.start()
+        except Exception:
+            pass
+        self._tick()
+        log("准备开跑：%.2f km / %s" % (km, name))
+
         def job():
             from . import bridge
             from tsnRunServer import TsnRunType
             t = {"morning_run": TsnRunType.morningRun, "free_run": TsnRunType.freedom,
                  "sunshine_run": TsnRunType.sumRun}[key]
-            log("准备开跑：%.2f km / %s" % (km, name))
             try:
-                bridge.run(self.store.accounts[0]["id"], km, t, minutes, cadence, log)
+                bridge.run(self.store.accounts[0]["id"], km, t, minutes, cadence,
+                           log=lambda m: log(m),
+                           on_progress=lambda m: self.after(0, self._on_progress, m))
+                self.after(0, self._finish, True, "")
             except Exception as e:
-                log("跑步失败：%s" % e)
+                self.after(0, self._finish, False, "跑步失败：%s" % e)
         self.bg(job)
 
     def on_query(self):
