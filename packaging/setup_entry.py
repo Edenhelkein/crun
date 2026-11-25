@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 APP_NAME = "CRUN"
@@ -58,11 +59,43 @@ def make_shortcut(lnk, target, workdir, args=""):
         % (lnk, target, args, workdir, target))
 
 
+def _pids_under(dst):
+    """列出正在从目标目录运行的进程（装新版前要先关掉，否则文件被占用）。"""
+    try:
+        ps = ("Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '%s\\*' } "
+              "| ForEach-Object { $_.Id }" % dst.replace("'", "''"))
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                             capture_output=True, text=True, timeout=20)
+        return [int(x) for x in out.stdout.split() if x.strip().isdigit()]
+    except Exception:
+        return []
+
+
+def _extract(zip_path, dst, log):
+    for attempt in range(3):
+        try:
+            with zipfile.ZipFile(zip_path) as z:
+                z.extractall(dst)
+            return True
+        except PermissionError:
+            pids = _pids_under(dst)
+            if pids:
+                log("检测到 CRUN 正在运行（PID %s），正在关闭…" % ",".join(map(str, pids)))
+                for pid in pids:
+                    subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                                   capture_output=True, text=True)
+            else:
+                log("文件被占用（杀毒软件可能正在扫描），%.0f 秒后重试…" % 1.5)
+            time.sleep(1.5)
+    return False
+
+
 def install(dst, import_legacy=True, desktop=True, launch=True, log=print):
     os.makedirs(dst, exist_ok=True)
     log("解压程序包…")
-    with zipfile.ZipFile(payload_zip()) as z:
-        z.extractall(dst)
+    if not _extract(payload_zip(), dst, log):
+        raise RuntimeError("目标目录里的文件被占用，无法覆盖：\n%s\n\n"
+                           "请先在任务管理器里结束所有 CRUN 进程，或用杀毒软件把该目录加入信任后重试。" % dst)
 
     with open(os.path.join(dst, "version.txt"), "w", encoding="utf-8") as f:
         f.write(APP_VER + "\n")
