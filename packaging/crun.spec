@@ -13,6 +13,13 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = os.path.dirname(SPECPATH)
 
+# CI 上仓库里只有 legacy_bundle.zip，这里现场展开；本地开发直接用 legacy/ 目录
+_bundle = os.path.join(ROOT, "legacy_bundle.zip")
+if (not os.path.isdir(os.path.join(ROOT, "legacy")) or
+        not os.path.isdir(os.path.join(ROOT, "legacy_site"))) and os.path.exists(_bundle):
+    import zipfile
+    zipfile.ZipFile(_bundle).extractall(ROOT)
+
 a = Analysis(
     [os.path.join(ROOT, 'packaging', 'entry.py')],
     pathex=[ROOT],

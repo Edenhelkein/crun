@@ -24,3 +24,18 @@ crun-setup.log
 # 编辑器
 .vscode/
 .idea/
+
+# 原版模块（发布时要打进包里）
+!legacy/**
+!legacy_site/**
+
+
+# 本地凭证
+.gh_token
+gh_token
+
+
+# 原版模块打包成单个 zip，避免几百个小文件
+legacy/
+legacy_site/
+
