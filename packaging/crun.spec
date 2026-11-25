@@ -7,6 +7,7 @@
   2. onedir 的启动更快，也方便用户自己核对文件；
   3. 更新模块本来就是整包替换，onedir 反而更契合。
 """
+import json
 import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -20,6 +21,29 @@ if (not os.path.isdir(os.path.join(ROOT, "legacy")) or
     import zipfile
     zipfile.ZipFile(_bundle).extractall(ROOT)
 
+# 原版模块是以 .pyc 数据形式打进来的，PyInstaller 看不到它们内部的 import，
+# 必须显式收集，否则运行时报 "No module named 'glob'/'uuid'"。
+_STD_EXTRA = [
+    "glob", "uuid", "sysconfig", "getpass", "secrets", "unicodedata", "csv", "tarfile",
+    "zipfile", "platform", "multiprocessing", "xml", "email", "html", "http", "ssl",
+    "sqlite3", "decimal", "fractions", "statistics", "string", "textwrap", "shlex",
+    "tempfile", "webbrowser", "winreg", "ctypes", "struct", "array", "binascii", "zlib",
+    "bz2", "lzma", "pickle", "copy", "pprint", "difflib", "fnmatch", "codecs", "locale",
+    "signal", "atexit", "gc", "types", "weakref", "contextlib", "functools", "itertools",
+    "collections", "operator", "re", "numbers", "abc", "warnings", "traceback", "pdb",
+    "ast", "dis", "marshal", "importlib", "pkgutil", "runpy", "site", "cmath", "errno",
+    "fcntl", "gettext", "gzip", "imghdr", "ipaddress", "linecache", "msvcrt", "netrc",
+    "nturl2path", "opcode", "pkg_resources", "quopri", "select", "selectors", "socketserver",
+    "stringprep", "termios", "token", "tokenize", "tracemalloc", "tty", "urllib",
+]
+_scanned = []
+_p = os.path.join(ROOT, "legacy_imports.json")
+if os.path.exists(_p):
+    try:
+        _scanned = json.load(open(_p, encoding="utf-8"))
+    except Exception:
+        _scanned = []
+
 a = Analysis(
     [os.path.join(ROOT, 'packaging', 'entry.py')],
     pathex=[ROOT],
@@ -30,7 +54,9 @@ a = Analysis(
         (os.path.join(ROOT, 'assets', 'tsn_data.db'), 'assets'),
     ] + collect_data_files('customtkinter')
       + [(os.path.join(ROOT, 'legacy'), 'legacy'), (os.path.join(ROOT, 'legacy_site'), 'legacy_site')],
-    hiddenimports=['customtkinter', 'darkdetect', 'sqlite3', 'sysconfig'] + collect_submodules('customtkinter'),
+    hiddenimports=(['customtkinter', 'darkdetect', 'sqlite3', 'sysconfig']
+                   + collect_submodules('customtkinter')
+                   + sorted(set(_STD_EXTRA) | set(_scanned))),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

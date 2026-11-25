@@ -117,6 +117,16 @@ def _default_data_dir():
     return os.getcwd()
 
 
+def _boot_log(msg, data_dir=None):
+    try:
+        base = data_dir or os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "CRUN")
+        os.makedirs(base, exist_ok=True)
+        with open(os.path.join(base, "crun-launch.log"), "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (__import__("time").strftime("%H:%M:%S"), msg))
+    except Exception:
+        pass
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     data_dir = None
@@ -128,18 +138,34 @@ def main(argv=None):
         else:
             i += 1
 
+    _boot_log("start", data_dir)
     bundled, ext = prepare_path()
+    _boot_log("legacy paths: %s" % (bundled or ext))
     data_dir = data_dir or _default_data_dir()
+    _boot_log("data dir: %s" % data_dir)
     db = ensure_data_dir(data_dir, bundled + ext)
     os.chdir(data_dir)          # 原版要求工作目录里有 tsn_data.db
+    _boot_log("db: %s exists=%s" % (db, os.path.exists(db)))
     print("数据目录：%s" % data_dir)
     print("数据库  ：%s (%s)" % (db, "存在" if os.path.exists(db) else "缺失"))
 
-    apply_patches()
+    apply_patches(_boot_log)
 
-    import gui_app
-    app = gui_app.App()
-    app.mainloop()
+    try:
+        import gui_app
+        _boot_log("gui_app imported")
+        app = gui_app.App()
+        _boot_log("App constructed, entering mainloop")
+        app.mainloop()
+        _boot_log("mainloop returned")
+    except Exception:
+        import traceback
+        _boot_log("LAUNCH FAILED:\n" + traceback.format_exc())
+        try:
+            import tkinter.messagebox as mb
+            mb.showerror("启动失败", traceback.format_exc()[-1200:])
+        except Exception:
+            pass
     return 0
 
 
