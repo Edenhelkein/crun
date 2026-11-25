@@ -122,14 +122,14 @@ def install(dst, import_legacy=True, desktop=True, launch=True, log=print):
     start_menu = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs")
     try:
         if os.path.isdir(start_menu):
-            make_shortcut(os.path.join(start_menu, APP_NAME + ".lnk"), exe, dst, "ui")
+            make_shortcut(os.path.join(start_menu, APP_NAME + ".lnk"), exe, dst, "")
     except Exception as e:
         log("开始菜单快捷方式失败：%s" % e)
     if desktop:
         try:
             desk = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
             if os.path.isdir(desk):
-                make_shortcut(os.path.join(desk, APP_NAME + ".lnk"), exe, dst, "ui")
+                make_shortcut(os.path.join(desk, APP_NAME + ".lnk"), exe, dst, "")
         except Exception as e:
             log("桌面快捷方式失败：%s" % e)
 
@@ -156,7 +156,7 @@ def install(dst, import_legacy=True, desktop=True, launch=True, log=print):
 
     if launch:
         try:
-            subprocess.Popen([exe, "ui"], cwd=dst, creationflags=0x00000008,
+            subprocess.Popen([exe], cwd=dst, creationflags=0x00000008,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
