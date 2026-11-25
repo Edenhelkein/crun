@@ -226,10 +226,10 @@ def cmd_version(a):
 
 
 def main(argv=None):
-    # 双击 exe（无参数）直接开原版界面（带增强），这是用户要的"原版优化版"
+    # 双击 exe（无参数）直接开新界面；原版界面用 `crun legacy`
     if argv is None and len(sys.argv) == 1:
-        from .legacy_app import main as legacy_main
-        return legacy_main()
+        from .newui import main as ui_main
+        return ui_main([])
     p = argparse.ArgumentParser(prog="crun")
     sub = p.add_subparsers(dest="cmd", required=True)
 
