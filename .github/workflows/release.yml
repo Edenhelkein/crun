@@ -78,6 +78,15 @@ jobs:
       - name: Build installer
         run: pyinstaller packaging/crun_setup.spec --noconfirm --clean --distpath dist/installer
 
+      - name: Build portable installer (no %TEMP% extraction)
+        run: pyinstaller packaging/crun_setup_onedir.spec --noconfirm --clean --distpath dist/installer_onedir
+
+      - name: Zip portable installer
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/installer_onedir/crun-setup/* `
+            -DestinationPath "dist/release/crun-setup-${{ steps.ver.outputs.version }}-portable.zip" -Force
+
       - name: Sign installer
         if: env.HAS_PFX == 'yes'
         shell: pwsh
