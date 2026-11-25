@@ -8,6 +8,7 @@
   2. 运行日志里追加自审结论（角度/步频/速度是否会在平台侧露馅）
   3. 数据目录与旧版隔离：默认用 %LOCALAPPDATA%\\CRUN\\legacy，可 --data-dir 指定
 """
+import json
 import os
 import shutil
 import sys
@@ -52,11 +53,12 @@ def ensure_data_dir(data_dir, legacy_dirs):
                         shutil.copyfile(src, db)
                         break
 
-    # 设备指纹文件：原版读 _MEIPASS/device_profiles.json，缺了会报 Errno 2
+    # 设备指纹文件：原版读 device_profiles.json，缺了会报 Errno 2
     prof = os.path.join(data_dir, "device_profiles.json")
     if not os.path.exists(prof):
         for cand in (os.path.join(base, "device_profiles.json"),
                      os.path.join(base, "assets", "device_profiles.json"),
+                     os.path.join(base, "legacy", "device_profiles.json"),
                      os.path.join(here, "assets", "device_profiles.json")):
             try:
                 if os.path.exists(cand):
@@ -64,6 +66,16 @@ def ensure_data_dir(data_dir, legacy_dirs):
                     break
             except OSError:
                 pass
+    if not os.path.exists(prof):
+        try:                       # 实在找不到就写一份默认的，别让程序带着 ENOENT 跑
+            with open(prof, "w", encoding="utf-8") as f:
+                json.dump({"host::DEFAULT": {
+                    "brand": "Redmi", "model": "2409BRN2CC", "osver": "14",
+                    "a_list": "arm64-v8a,armeabi-v7a",
+                    "android_id": "96482f740870aaab", "device_name": "2409BRN2CC"}},
+                    f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
 
     # 这些目录原版会往里写东西，先建好，省得运行到一半 Errno 2
     for sub in ("logs", "faces", "face", "images", "out"):

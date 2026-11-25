@@ -72,18 +72,32 @@ def _pids_under(dst):
 
 
 def _extract(zip_path, dst, log):
+    """解压程序包；如果 zip 里套了一层同名文件夹（为了拖动方便），把它剥掉。"""
     for attempt in range(3):
         try:
             with zipfile.ZipFile(zip_path) as z:
-                z.extractall(dst)
+                names = [n for n in z.namelist() if n and not n.endswith("/")]
+                tops = {n.split("/")[0] for n in names}
+                prefix = ""
+                if len(tops) == 1:
+                    top = next(iter(tops))
+                    if all(n.startswith(top + "/") for n in names):
+                        prefix = top + "/"
+                for n in names:
+                    rel = n[len(prefix):] if prefix and n.startswith(prefix) else n
+                    if not rel:
+                        continue
+                    target = os.path.join(dst, rel.replace("/", os.sep))
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with z.open(n) as src, open(target, "wb") as out:
+                        shutil.copyfileobj(src, out)
             return True
         except PermissionError:
             pids = _pids_under(dst)
             if pids:
                 log("检测到 CRUN 正在运行（PID %s），正在关闭…" % ",".join(map(str, pids)))
                 for pid in pids:
-                    subprocess.run(["taskkill", "/PID", str(pid), "/F"],
-                                   capture_output=True, text=True)
+                    subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True)
             else:
                 log("文件被占用（杀毒软件可能正在扫描），%.0f 秒后重试…" % 1.5)
             time.sleep(1.5)
@@ -99,6 +113,16 @@ def install(dst, import_legacy=True, desktop=True, launch=True, log=print):
 
     with open(os.path.join(dst, "version.txt"), "w", encoding="utf-8") as f:
         f.write(APP_VER + "\n")
+
+    # 清掉旧安装器误建的嵌套目录（crun-2.0.x-win64），免得新旧文件混在一起
+    try:
+        for name in os.listdir(dst):
+            p = os.path.join(dst, name)
+            if os.path.isdir(p) and name.startswith("crun-") and os.path.exists(os.path.join(p, "crun.exe")):
+                shutil.rmtree(p, ignore_errors=True)
+                log("已清理残留目录 %s" % name)
+    except OSError:
+        pass
 
     migrated = None
     if import_legacy:
@@ -133,9 +157,11 @@ def install(dst, import_legacy=True, desktop=True, launch=True, log=print):
         except Exception as e:
             log("桌面快捷方式失败：%s" % e)
 
-    # 卸载器 = 本项目 exe 的副本
+    # 卸载器：包内已带 crun-uninstall.exe，就不用再复制安装器自己
     try:
-        shutil.copyfile(sys.executable, os.path.join(dst, "uninstall.exe"))
+        uni = os.path.join(dst, "uninstall.exe")
+        if not os.path.exists(uni):
+            shutil.copyfile(sys.executable, uni)
     except Exception:
         pass
 
