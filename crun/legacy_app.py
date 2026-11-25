@@ -312,6 +312,48 @@ def _boot_log(msg, data_dir=None):
         pass
 
 
+def _restyle(widget, depth=0):
+    """在原版界面建好之后统一刷一遍外观：卡片圆角、描边、侧栏配色。
+
+    不改布局，只调颜色/圆角/描边，所以不会动到原版的交互逻辑。
+    """
+    try:
+        import customtkinter as ctk
+    except Exception:
+        return
+    if depth > 6:
+        return
+    try:
+        children = widget.winfo_children()
+    except Exception:
+        return
+    for w in children:
+        try:
+            cls = w.__class__.__name__
+            width = 0
+            try:
+                width = int(w.winfo_width())
+            except Exception:
+                pass
+            if cls == "CTkFrame":
+                if depth == 0:
+                    # 顶层：左窄的是侧栏，其余是内容区
+                    w.configure(corner_radius=0, border_width=0,
+                                fg_color="#0C1218" if (width and width < 320) else "#0B0F14")
+                elif depth <= 2:
+                    w.configure(corner_radius=12, border_width=1, border_color="#24313F",
+                                fg_color="#131C26")
+            elif cls == "CTkButton":
+                w.configure(corner_radius=9)
+            elif cls == "CTkEntry":
+                w.configure(corner_radius=9, border_width=1, border_color="#243444")
+            elif cls == "CTkLabel":
+                pass          # 标签颜色交给主题，避免把强调色覆盖掉
+        except Exception:
+            pass
+        _restyle(w, depth + 1)
+
+
 def _polish_ui():
     """外观：深色 + 自定义主题（有就用 assets/crun_theme.json）+ 高 DPI。"""
     try:
@@ -333,7 +375,21 @@ def _polish_ui():
             if os.path.exists(cand):
                 theme = cand
                 break
-        ctk.set_default_color_theme(theme or "green")
+        if theme:
+            _orig_theme = ctk.set_default_color_theme
+            _orig_theme(theme)
+
+            # 原版 gui_app 自己会再调一次 set_default_color_theme("blue")，
+            # 直接把我们的主题顶掉。这里拦掉它：只允许加载文件路径的主题。
+            def _guarded(name_or_path, *a, **kw):
+                try:
+                    if isinstance(name_or_path, str) and not os.path.exists(name_or_path):
+                        return None
+                except Exception:
+                    pass
+                return _orig_theme(name_or_path, *a, **kw)
+
+            ctk.set_default_color_theme = _guarded
     except Exception:
         pass
 
@@ -367,6 +423,8 @@ def main(argv=None):
         import gui_app
         _boot_log("gui_app imported")
         app = gui_app.App()
+        app.update_idletasks()
+        _restyle(app)
         _boot_log("App constructed, entering mainloop")
         app.mainloop()
         _boot_log("mainloop returned")
