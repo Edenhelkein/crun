@@ -521,188 +521,43 @@ class App(ctk.CTk):
         tick()
 
     def _fire_login(self, acc, pwd, log):
+        """① 先踢掉该账号所有旧会话 → ② 密码登录 → ③ 验证。"""
         def job():
-            import time as _t
             from . import bridge, safe_login
             aid = acc["id"]
             try:
-                # 1) 登录前检查：服务器还认不认我们这个会话
-                log("① 检查服务器会话…")
+                log("① 先踢掉这个账号在服务器上的所有旧会话（手机端会掉线）")
+                k = bridge.kick_all_sessions(aid, log=log)
+                if not k.get("kicked"):
+                    log("   没踢掉（%s）。如果你是第一次在这台机器登录，属正常；" % k.get("detail"))
+                    log("   如果手机 App 还登着，请先去手机端退出，再回来点一次。")
+                else:
+                    log("   已作废旧会话，等 5 秒让服务端结算…")
+                    import time as _t
+                    _t.sleep(5)
+
+                log("② 用账密登录（走 App 的 oauth 通道）")
+                res = bridge.login_password(aid, acc["username"], pwd, log=log)
+                if not res.get("ok"):
+                    raise RuntimeError("登录未返回 token")
+
+                log("③ 验证新会话")
                 st = bridge.session_state(aid, log=log)
-                # 2) 有效就先踢掉，让手机端彻底下线，再重新登录
                 if st.get("valid"):
-                    log("② 检测到会话仍在，先强制退出（手机端会掉线）…")
-                    kicked = bridge.force_logout(aid, log=log)
-                    if kicked.get("kicked"):
-                        log("   已作废旧会话，等 5 秒让服务端结算…")
-                        _t.sleep(5)
-                    else:
-                        log("   强制退出未被确认，继续尝试登录")
-                elif st.get("has_token"):
-                    log("② 旧会话已失效（%s），无需踢人" % st.get("detail"))
+                    safe_login.record(self.dir, type("A", (), {"id": aid, "username": acc["username"]}))
+                    log("✅ 完成：现在服务器上只有这一台设备在线")
+                    self.after(0, self._refresh_login_state, "登录完成")
                 else:
-                    log("② 本地没有凭据，无法预踢 —— 走保守流程")
-
-                # 3) 重新登录
-                log("③ 发起登录…")
-                bridge.login(aid, log)
-                safe_login.record(self.dir, type("A", (), {"id": aid, "username": acc["username"]}))
-                log("✅ 登录完成，当前只有这一台设备在线")
-                self.after(0, self._refresh_login_state, "登录完成")
+                    log("⚠ 登录返回成功但校验失败（%s），请点「登录体检」看看" % st.get("detail"))
+                    self.after(0, self._refresh_login_state, "校验未通过")
             except Exception as e:
-                log("登录失败：%s" % e)
+                try:
+                    from . import preflight
+                    why = preflight.explain_error(e)
+                    log("登录失败：%s\n原因：%s\n怎么办：%s" % (e, why["what"], why["todo"]))
+                except Exception:
+                    log("登录失败：%s" % e)
                 self.after(0, self._refresh_login_state, "登录失败")
-        self.bg(job)
-
-    # ---------------------------------------------------------------- 账号选择
-    def active_account(self):
-        """当前活跃账号：登录安全闸记的那个；没有就退回第一个。"""
-        try:
-            from . import safe_login
-            st = safe_login.load(self.dir)
-            act = st.get("active")
-            for a in self.store.accounts:
-                if str(a["id"]) == str(act):
-                    return a
-        except Exception:
-            pass
-        return self.store.accounts[0] if self.store.accounts else None
-
-    def on_oneclick(self):
-        """一键准备：学校 → 续期 → 路线 → 人脸 → 体检，缺什么补什么，已有的跳过。"""
-        log = self._log(self.log_prep)
-        acc = self.active_account()
-        if not acc:
-            log("没有账号，先在准备页登录")
-            return
-        if getattr(self, "prepping", False):
-            log("一键准备已经在跑了")
-            return
-        self.prepping = True
-
-        def job():
-            from . import bridge, preflight
-            ok_all = True
-            try:
-                log("========== 一键准备开始 ==========")
-
-                # ① 学校
-                n = self.store.schools
-                if n < 100:
-                    log("① 学校列表只有 %d 所，开始更新…" % n)
-                    try:
-                        bridge.update_schools(self.store.db, log)
-                    except Exception as e:
-                        log("   学校更新失败：%s" % e)
-                        ok_all = False
-                else:
-                    log("① 学校列表 %d 所，跳过" % n)
-
-                # ② 登录态（只用 refresh 续期，绝不触发新的设备登录）
-                log("② 检查登录态…")
-                st = bridge.refresh_session(acc["id"], log=log)
-                if not st.get("ok"):
-                    log("   续期没成功（%s）。为安全起见不自动重登 ——" % st.get("detail"))
-                    log("   请手动点「登录 / 复用」（有冷却与倒计时保护），或用「粘贴 token」")
-                    ok_all = False
-
-                # ③ 路线
-                if len(self.store.routes) == 0:
-                    log("③ 本地没有路线，开始爬取…")
-                    try:
-                        bridge.crawl_paths(acc["id"], log)
-                    except Exception as e:
-                        log("   爬取失败：%s" % e)
-                        ok_all = False
-                else:
-                    log("③ 已有 %d 条路线，跳过" % len(self.store.routes))
-
-                # ④ 人脸
-                faces = 0
-                fdir = os.path.join(self.dir, "face_images")
-                if os.path.isdir(fdir):
-                    for _r, _d, fs in os.walk(fdir):
-                        faces += len([f for f in fs if f.lower().endswith((".jpg", ".png"))])
-                if faces == 0:
-                    log("④ 本地没有人脸照片，开始拉取…")
-                    try:
-                        bridge.update_face(acc["id"], log)
-                    except Exception as e:
-                        log("   人脸更新失败：%s" % e)
-                        ok_all = False
-                else:
-                    log("④ 已有 %d 张人脸，跳过" % faces)
-
-                # ⑤ 体检
-                log("⑤ 复查本地状态…")
-                for name, good, detail, todo in preflight.local_checks(self.dir):
-                    log("   %s %s：%s" % ("✅" if good else "❌", name, detail if good else todo))
-                    if not good:
-                        ok_all = False
-                log("========== 一键准备结束：%s ==========" % ("全部就绪" if ok_all else "有项目没搞定，看上面"))
-            finally:
-                self.prepping = False
-                self.after(0, lambda: self.show("prep"))
-        self.bg(job)
-
-    def _prep_checklist(self):
-        """防呆清单：每项一眼看出缺什么、该点哪儿。"""
-        try:
-            from . import preflight
-            rows = preflight.local_checks(self.dir)
-        except Exception:
-            return
-        bar = self.card(self.body, width=self.X(916), height=self.X(124))
-        bar.place(x=self.X(28), y=self.X(78))
-        bar.pack_propagate(False)
-        self.lbl(bar, "开跑前检查（缺什么点右边那句话去做）", size=11, bold=True).place(
-            x=self.X(16), y=self.X(8))
-        col = 0
-        for i, (name, ok, detail, todo) in enumerate(rows):
-            r, c = divmod(i, 2)
-            x = 16 + c * 450
-            y = 30 + r * 26
-            self.lbl(bar, ("✅ " if ok else "❌ ") + name, size=10, bold=True,
-                     color=P["ok"] if ok else P["bad"]).place(x=self.X(x), y=self.X(y))
-            tail = todo if (not ok and todo != "正常") else detail
-            self.lbl(bar, tail, size=9, dim=True).place(x=self.X(x + 74), y=self.X(y + 1))
-        self.btn(bar, "一键准备", cmd=self.on_oneclick, primary=True, w=120, h=34).place(
-            x=self.X(770), y=self.X(40))
-
-    def on_diagnose(self):
-        log = self._log(self.log_prep)
-        acc = self.active_account()
-        if not acc:
-            log("没有账号")
-            return
-        def job():
-            from . import bridge
-            log("—— 登录链路体检（账号 %s）——" % acc["username"])
-            try:
-                bridge.diagnose(acc["id"], log=log)
-            except Exception as e:
-                log("体检失败：%s" % e)
-        self.bg(job)
-
-    def on_paste_token(self):
-        from tkinter import simpledialog
-        acc = self.active_account()
-        if not acc:
-            return
-        tok = simpledialog.askstring("粘贴 token",
-                                     "把浏览器里拿到的 access_token 粘进来：\n"
-                                     "（F12 → Application → Local Storage → token / access_token）",
-                                     parent=self)
-        if not tok:
-            return
-        log = self._log(self.log_prep)
-        def job():
-            from . import bridge
-            try:
-                st = bridge.set_token(acc["id"], tok, log=log)
-                log("校验结果：%s" % ("有效" if st.get("valid") else st.get("detail")))
-            except Exception as e:
-                log("导入失败：%s" % e)
         self.bg(job)
 
     def on_crawl(self):

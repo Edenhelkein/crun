@@ -510,6 +510,88 @@ def check_ban(account_id, log=print):
     return {"known": True, "banned": False, "detail": "HTTP %s" % r.status_code}
 
 
+def login_password(account_id, username, password, log=print):
+    """密码登录 —— 走 /auth/oauth/token（App 自己的登录通道）。
+
+    原版走的 /app/appstu/login 在服务器上已经 404，但公共客户端
+    TiShiNengSdkPublic.getAccessToken() 用的正是 App 的 oauth 通道，实测可用。
+    """
+    ensure_paths()
+    import sqlite3
+    import uuid
+    import warnings
+    warnings.filterwarnings("ignore")
+    from TiShiNengSdkPublic import TiShiNengSdkPublic
+
+    row = _school_row(account_id)
+    if not row:
+        raise RuntimeError("账号不存在")
+    user_id, school_id, device_id, school_code, open_id, school_url, is_open_encry = row
+    base = _api_base(account_id)
+
+    cli = TiShiNengSdkPublic(str(user_id or ""), int(school_id or 0), str(school_code or ""),
+                             str(open_id or ""), str(device_id or uuid.uuid4()),
+                             "Xiaomi", "25053RT47C", "14", "", "arm64-v8a")
+    try:
+        cli.setCloudUrl(base)
+    except Exception:
+        pass
+    log("登录 %s（oauth 通道 %s）…" % (username, base))
+    resp = _run(cli.getAccessToken(username, password))
+    if not isinstance(resp, dict) or not resp.get("access_token"):
+        raise RuntimeError("登录没有返回 token：%s" % str(resp)[:160])
+    tok = resp["access_token"]
+    rt = resp.get("refresh_token") or ""
+    uid = resp.get("user_id") or user_id
+    con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+    con.execute("update tsn_account set password=?, access_token=?, refresh_token=?, expires_in=?,"
+                " user_id=coalesce(nullif(?,''), user_id) where id=?",
+                (password, tok, rt, 86399, str(uid or ""), account_id))
+    con.commit()
+    con.close()
+    log("✅ 登录成功，token 已写入（user_id=%s）" % uid)
+    return {"ok": True, "token": tok, "refresh_token": rt, "user_id": uid}
+
+
+def kick_all_sessions(account_id, log=print):
+    """用当前 token 把该账号所有会话踢掉（含手机端）。
+
+    优先用 refresh_token 换一个临时 token 再踢，这样不会影响后面要新建的会话。
+    """
+    ensure_paths()
+    import sqlite3
+    import warnings
+    warnings.filterwarnings("ignore")
+    httpx = _auth_client()
+    con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+    tok = con.execute("select access_token from tsn_account where id=?", (account_id,)).fetchone()
+    con.close()
+    tok = (tok[0] if tok else "") or ""
+    if not tok:
+        st = refresh_session(account_id, log=log)
+        if not st.get("ok"):
+            log("没有可用 token，无法预先踢人（首次登录时属正常情况）")
+            return {"kicked": False, "detail": "无 token"}
+        tok = st.get("token", "")
+    if not tok:
+        return {"kicked": False, "detail": "无 token"}
+    url = _api_base(account_id).rstrip("/") + "/auth/token/logout"
+    try:
+        r = httpx.post(url, headers={"Authorization": "bearer " + tok,
+                                     "User-Agent": "okhttp/3.12.0"}, timeout=15, verify=False)
+        log("踢人：HTTP %s" % r.status_code)
+        if r.status_code in (200, 204):
+            con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+            con.execute("update tsn_account set access_token='', expires_in=0 where id=?", (account_id,))
+            con.commit()
+            con.close()
+            return {"kicked": True, "detail": "HTTP %s" % r.status_code}
+        return {"kicked": False, "detail": "HTTP %s" % r.status_code}
+    except Exception as e:
+        log("踢人失败：%s" % e)
+        return {"kicked": False, "detail": str(e)}
+
+
 def login(account_id, log=print):
     """走原版的私有客户端：本地 token 还有效就直接复用，不重复登录。
 

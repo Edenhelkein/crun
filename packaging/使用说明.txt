@@ -110,7 +110,17 @@
   - 不要反复重试跑步：重复请求会加重风控
   - 解封日期在报错里会写（例如 2026-12-26），到期自动恢复
 
-【密码登录报 404 / 405】
+【密码登录：已修复（2.6.0）】
+  原版走的 /app/appstu/login 在服务器上 404 了，但 App 自己的 oauth 通道还在：
+    POST <学校API>/auth/oauth/token?grant_type=password&type=app&appType=stuApp
+  这版改用这条通道登录，流程是：
+    ① 先用本地 token / refresh_token 把该账号所有旧会话踢掉（手机端掉线）
+    ② 等 5 秒
+    ③ 用账密登录，拿到全新 token
+    ④ 校验新 token 是否被服务器认可
+  这样服务端全程只看到一台设备，正是"先踢下线再登录"。
+
+【历史上密码登录报 404 / 405（2.6.0 之前）】
   学校后端升级过，App 的登录接口 /app/appstu/login 在服务器上已经不存在了
   （实测 h.tsnkj.com、gdzqac.tsnkj.com、a.sxstczx.com 全部 404）。
   这版的处理方式：
