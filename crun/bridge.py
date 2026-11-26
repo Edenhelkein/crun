@@ -144,6 +144,87 @@ def schools_of_province(province_id, log=print):
     return rows
 
 
+def _auth_client():
+    return __import__("httpx")
+
+
+def _account_row(account_id):
+    import sqlite3
+    con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+    try:
+        cur = con.execute("select id, username, password, access_token, refresh_token from tsn_account where id=?",
+                          (account_id,))
+        row = cur.fetchone()
+    finally:
+        con.close()
+    return row
+
+
+def session_state(account_id, log=print):
+    """登录前检查：用本地 access_token 问服务器"我这个会话还活着吗"。
+
+    返回 dict(has_token, valid, detail)
+    """
+    ensure_paths()
+    import tsn_routes as R
+    row = _account_row(account_id)
+    if not row or not (row[3] or "").strip():
+        log("本地没有 access_token，无法预检会话")
+        return {"has_token": False, "valid": False, "detail": "本地无 token"}
+    tok = row[3].strip()
+    url = R.build_url(R.DEFAULT_BASE_URL, "getLoginUserInfo")
+    httpx = _auth_client()
+    try:
+        r = httpx.get(url, headers={"Authorization": "bearer " + tok}, timeout=15, verify=False)
+        if r.status_code == 200:
+            log("会话有效（服务器认得这个 token）")
+            return {"has_token": True, "valid": True, "detail": "有效"}
+        log("会话已失效：HTTP %s" % r.status_code)
+        return {"has_token": True, "valid": False, "detail": "HTTP %s" % r.status_code}
+    except Exception as e:
+        log("会话检查失败：%s" % e)
+        return {"has_token": True, "valid": False, "detail": str(e)}
+
+
+def force_logout(account_id, log=print):
+    """强制退出该账号在服务器上的会话（手机端也会被踢下线）。
+
+    这是"登录前检查 + 先踢人再登录"的核心：把可能还活着的手机会话作废，
+    避免服务端把接下来的登录看成第二台设备。
+    """
+    ensure_paths()
+    import tsn_routes as R
+    row = _account_row(account_id)
+    if not row:
+        raise RuntimeError("账号不存在")
+    tok = (row[3] or "").strip()
+    if not tok:
+        log("没有 access_token，无法强制退出（首次登录没有凭据可踢）")
+        return {"kicked": False, "detail": "无 token"}
+    url = R.build_url(R.DEFAULT_BASE_URL, "logout")
+    httpx = _auth_client()
+    for method in ("post", "get"):
+        try:
+            fn = getattr(httpx, method)
+            r = fn(url, headers={"Authorization": "bearer " + tok}, timeout=15, verify=False)
+            log("强制退出 %s：HTTP %s" % (method.upper(), r.status_code))
+            if r.status_code in (200, 204):
+                # 本地 token 也一并作废，避免拿旧 token 继续打接口
+                try:
+                    import sqlite3
+                    con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+                    con.execute("update tsn_account set access_token='', refresh_token='', expires_in=0 where id=?",
+                                (account_id,))
+                    con.commit()
+                    con.close()
+                except Exception:
+                    pass
+                return {"kicked": True, "detail": "HTTP %s" % r.status_code}
+        except Exception as e:
+            log("强制退出失败（%s）：%s" % (method, e))
+    return {"kicked": False, "detail": "服务器未确认"}
+
+
 def login(account_id, log=print):
     """走原版的私有客户端：本地 token 还有效就直接复用，不重复登录。
 

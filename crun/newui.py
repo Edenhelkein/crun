@@ -446,8 +446,8 @@ class App(ctk.CTk):
                     self._ask_switch(acc, pwd, log, check)
                 return
         if check["code"] == "reuse":
-            log("✅ " + check["message"])
-            self._refresh_login_state("已复用登录态")
+            log("✅ 本地登录态还有效 —— 会先强制退出再重新登录，确保只有一台设备在线")
+            self._fire_login(acc, pwd, log)
             return
         self._wait_then_login(acc, pwd, log, safe_login.PHONE_SETTLE_S)
 
@@ -519,12 +519,32 @@ class App(ctk.CTk):
 
     def _fire_login(self, acc, pwd, log):
         def job():
+            import time as _t
             from . import bridge, safe_login
-            log("正在登录 %s（token 有效会直接复用）…" % acc["username"])
+            aid = acc["id"]
             try:
-                bridge.login(acc["id"], log)
-                safe_login.record(self.dir, type("A", (), {"id": acc["id"], "username": acc["username"]}))
-                log("✅ 登录态就绪")
+                # 1) 登录前检查：服务器还认不认我们这个会话
+                log("① 检查服务器会话…")
+                st = bridge.session_state(aid, log=log)
+                # 2) 有效就先踢掉，让手机端彻底下线，再重新登录
+                if st.get("valid"):
+                    log("② 检测到会话仍在，先强制退出（手机端会掉线）…")
+                    kicked = bridge.force_logout(aid, log=log)
+                    if kicked.get("kicked"):
+                        log("   已作废旧会话，等 5 秒让服务端结算…")
+                        _t.sleep(5)
+                    else:
+                        log("   强制退出未被确认，继续尝试登录")
+                elif st.get("has_token"):
+                    log("② 旧会话已失效（%s），无需踢人" % st.get("detail"))
+                else:
+                    log("② 本地没有凭据，无法预踢 —— 走保守流程")
+
+                # 3) 重新登录
+                log("③ 发起登录…")
+                bridge.login(aid, log)
+                safe_login.record(self.dir, type("A", (), {"id": aid, "username": acc["username"]}))
+                log("✅ 登录完成，当前只有这一台设备在线")
                 self.after(0, self._refresh_login_state, "登录完成")
             except Exception as e:
                 log("登录失败：%s" % e)
