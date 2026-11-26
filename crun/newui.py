@@ -185,7 +185,7 @@ class App(ctk.CTk):
         self.btn(c1, "更新学校列表", cmd=self.on_schools, w=150).place(x=self.X(18), y=self.X(96))
 
         # 账号（单账号模式 + 登录安全闸）
-        c2 = self.card(self.body, width=self.X(572), height=self.X(170))
+        c2 = self.card(self.body, width=self.X(572), height=self.X(196))
         c2.place(x=self.X(344), y=self.X(88))
         c2.pack_propagate(False)
         self.lbl(c2, "账号", size=13, bold=True).place(x=self.X(18), y=self.X(12))
@@ -205,13 +205,15 @@ class App(ctk.CTk):
         self.lbl_account_state = self.lbl(c2, "", size=10, dim=True, justify="left")
         self.lbl_account_state.place(x=self.X(18), y=self.X(86))
         self.lbl(c2, "同一个号 15 分钟内不重复登录；换号要等 24 小时冷却（可用环境变量调整）",
-                 size=9, color=P["dim"]).place(x=self.X(18), y=self.X(140))
+                 size=9, color=P["dim"]).place(x=self.X(18), y=self.X(112))
+        self.btn(c2, "登录体检", cmd=self.on_diagnose, w=90, h=30).place(x=self.X(18), y=self.X(140))
+        self.btn(c2, "粘贴 token", cmd=self.on_paste_token, w=100, h=30).place(x=self.X(116), y=self.X(140))
         self._fill_pwd()
         self._refresh_login_state()
 
         # 路径 + 人脸
         c3 = self.card(self.body, width=self.X(916), height=self.X(120))
-        c3.place(x=self.X(28), y=self.X(276))
+        c3.place(x=self.X(28), y=self.X(300))
         c3.pack_propagate(False)
         self.lbl(c3, "路径", size=12, bold=True).place(x=self.X(18), y=self.X(16))
         self.lbl(c3, "%d 条历史路线" % len(self.store.routes), size=11, dim=True).place(x=self.X(18), y=self.X(40))
@@ -222,7 +224,7 @@ class App(ctk.CTk):
 
         # 日志（就在准备页里，不单开页）
         logc = self.card(self.body, width=self.X(916), height=self.X(250))
-        logc.place(x=self.X(28), y=self.X(410))
+        logc.place(x=self.X(28), y=self.X(434))
         logc.pack_propagate(False)
         self.lbl(logc, "运行日志", size=12, bold=True).place(x=self.X(18), y=self.X(10))
         self.log_prep = self.logbox(logc, 14, 36, 888, 200)
@@ -564,6 +566,42 @@ class App(ctk.CTk):
         except Exception:
             pass
         return self.store.accounts[0] if self.store.accounts else None
+
+    def on_diagnose(self):
+        log = self._log(self.log_prep)
+        acc = self.active_account()
+        if not acc:
+            log("没有账号")
+            return
+        def job():
+            from . import bridge
+            log("—— 登录链路体检（账号 %s）——" % acc["username"])
+            try:
+                bridge.diagnose(acc["id"], log=log)
+            except Exception as e:
+                log("体检失败：%s" % e)
+        self.bg(job)
+
+    def on_paste_token(self):
+        from tkinter import simpledialog
+        acc = self.active_account()
+        if not acc:
+            return
+        tok = simpledialog.askstring("粘贴 token",
+                                     "把浏览器里拿到的 access_token 粘进来：\n"
+                                     "（F12 → Application → Local Storage → token / access_token）",
+                                     parent=self)
+        if not tok:
+            return
+        log = self._log(self.log_prep)
+        def job():
+            from . import bridge
+            try:
+                st = bridge.set_token(acc["id"], tok, log=log)
+                log("校验结果：%s" % ("有效" if st.get("valid") else st.get("detail")))
+            except Exception as e:
+                log("导入失败：%s" % e)
+        self.bg(job)
 
     def on_crawl(self):
         log = self._log(self.log_prep)

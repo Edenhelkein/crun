@@ -225,6 +225,187 @@ def force_logout(account_id, log=print):
     return {"kicked": False, "detail": "服务器未确认"}
 
 
+def _school_row(account_id):
+    import sqlite3
+    con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+    try:
+        cur = con.execute(
+            "select a.user_id, a.school_id, a.mobile_device_id, s.school_code, s.open_id,"
+            " s.school_url, s.is_open_encry"
+            " from tsn_account a left join tsn_school s on s.school_id = a.school_id where a.id=?",
+            (account_id,))
+        return cur.fetchone()
+    finally:
+        con.close()
+
+
+def kick_with_password(account_id, username, password, log=print, relogin=True):
+    """先拿一次 token 把该账号全部会话踢掉，再重新登录一次。
+
+    学校侧的登录接口必须由原版客户端拼接（web 域名 + 签名），所以第①步直接
+    复用 getPrivateVersionClient：它会把新 token 写回本地库，我们读出来用于踢人。
+      ① 登录拿 token（此时手机端可能还在）
+      ② POST /auth/token/logout → 作废该账号所有会话，手机端掉线
+      ③ 等 5 秒
+      ④ 再登录一次 → 服务端只剩这一台设备
+    """
+    ensure_paths()
+    import sqlite3
+    import time as _time
+    import tsn_routes as R
+    import database
+    from tsnClient import getPrivateVersionClient, getTsnAccountByid
+
+    steps = []
+    db_path = os.path.join(os.getcwd(), "tsn_data.db")
+
+    def note(msg):
+        steps.append(msg)
+        log(msg)
+
+    def set_password():
+        con = sqlite3.connect(db_path, timeout=10)
+        con.execute("update tsn_account set password=? where id=?", (password, account_id))
+        con.commit()
+        con.close()
+
+    async def do_login(tag):
+        async for db in database.get_db():
+            acc = await getTsnAccountByid(account_id, db)
+            if acc is None:
+                raise RuntimeError("账号不存在")
+            await getPrivateVersionClient(acc)
+            con = sqlite3.connect(db_path, timeout=10)
+            tok = con.execute("select access_token from tsn_account where id=?", (account_id,)).fetchone()
+            con.close()
+            return (tok[0] if tok else "") or ""
+
+    set_password()
+
+    note("① 登录取 token（只为拿到踢人资格）")
+    try:
+        tok = _run(do_login("first"))
+    except Exception as e:
+        note("   ❌ 取 token 失败：%s" % e)
+        return {"kicked": False, "token": "", "steps": steps}
+    if not tok:
+        note("   ❌ 库里没有写回 token")
+        return {"kicked": False, "token": "", "steps": steps}
+    note("   token：%s…" % tok[:8])
+
+    note("② 作废该账号全部会话（手机端会被踢下线）")
+    httpx = _auth_client()
+    url = R.build_url(R.DEFAULT_BASE_URL, "logout")
+    kicked = False
+    for method in ("post", "get"):
+        try:
+            r = getattr(httpx, method)(url, headers={"Authorization": "bearer " + tok},
+                                       timeout=15, verify=False)
+            note("   %s → HTTP %s" % (method.upper(), r.status_code))
+            if r.status_code in (200, 204):
+                kicked = True
+                break
+        except Exception as e:
+            note("   %s 失败：%s" % (method, e))
+    if not kicked:
+        note("   ❌ 服务器没确认退出（会话可能仍在你手机上）")
+        return {"kicked": False, "token": tok, "steps": steps}
+
+    note("③ 等 5 秒让服务端结算")
+    _time.sleep(5)
+    if not relogin:
+        return {"kicked": True, "token": tok, "steps": steps}
+
+    note("④ 重新登录（此时只有这一台设备）")
+    try:
+        _run(do_login("second"))
+        note("   ✅ 已重新登录")
+        return {"kicked": True, "token": tok, "steps": steps, "relogged": True}
+    except Exception as e:
+        note("   ❌ 重新登录失败：%s" % e)
+        return {"kicked": True, "token": tok, "steps": steps, "relogged": False}
+
+
+def set_token(account_id, token, log=print):
+    """手动导入 token（学校侧登录接口取不到时，从浏览器里抠一个出来用）。"""
+    ensure_paths()
+    import sqlite3
+    tok = (token or "").strip().strip('"').strip("'")
+    if len(tok) < 16:
+        raise RuntimeError("token 看起来不像真的（长度不足）")
+    con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+    con.execute("update tsn_account set access_token=?, expires_in=? where id=?",
+                (tok, int(__import__("time").time()) + 86100, account_id))
+    con.commit()
+    con.close()
+    log("已写入 token：%s…" % tok[:8])
+    st = session_state(account_id, log=log)
+    return st
+
+
+def diagnose(account_id, log=print):
+    """登录链路体检：把每个依赖点单独打一遍，指出到底卡在哪一环。"""
+    ensure_paths()
+    import sqlite3
+    import warnings
+    import tsn_routes as R
+    warnings.filterwarnings("ignore")
+    httpx = _auth_client()
+    out = []
+
+    def rec(name, ok, detail=""):
+        out.append({"name": name, "ok": ok, "detail": detail})
+        log("%s %s %s" % ("✅" if ok else "❌", name, detail))
+
+    row = _school_row(account_id)
+    if not row:
+        rec("账号存在", False, "库里没有这个账号")
+        return out
+    user_id, school_id, device_id, school_code, open_id, school_url, is_open_encry = row
+    con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+    lan = con.execute("select lan_url from tsn_school where school_id=?", (school_id,)).fetchone()
+    tok_row = con.execute("select access_token from tsn_account where id=?", (account_id,)).fetchone()
+    con.close()
+    lan_url = (lan[0] if lan else "") or ""
+    token = (tok_row[0] if tok_row else "") or ""
+
+    rec("学校配置", bool(school_code), "schoolCode=%s lan_url=%s" % (school_code, lan_url or "(空)"))
+
+    # 1) 统一认证 /upms 是否活着
+    base = lan_url or R.DEFAULT_BASE_URL
+    try:
+        u = base.rstrip("/") + "/upms/basUser/getUserInfoByOpenid"
+        r = httpx.get(u, timeout=10, verify=False)
+        rec("统一认证 /upms 可达", r.status_code in (200, 401, 500), "HTTP %s %s" % (r.status_code, u))
+    except Exception as e:
+        rec("统一认证 /upms 可达", False, str(e))
+
+    # 2) App 登录接口 /app/appstu/login 是否还在
+    for host in (school_url, lan_url):
+        if not host:
+            continue
+        try:
+            u = host.split("?")[0].rstrip("/") + "/app/appstu/login"
+            r = httpx.post(u, json={}, timeout=10, verify=False)
+            rec("App 登录接口", r.status_code != 404, "HTTP %s %s" % (r.status_code, u))
+            break
+        except Exception as e:
+            rec("App 登录接口", False, str(e))
+
+    # 3) 本地 token 是否还有效
+    if token:
+        try:
+            u = R.build_url(R.DEFAULT_BASE_URL, "getLoginUserInfo")
+            r = httpx.get(u, headers={"Authorization": "bearer " + token}, timeout=10, verify=False)
+            rec("本地 token", r.status_code == 200, "HTTP %s" % r.status_code)
+        except Exception as e:
+            rec("本地 token", False, str(e))
+    else:
+        rec("本地 token", False, "没有存 token")
+
+    return out
+
+
 def login(account_id, log=print):
     """走原版的私有客户端：本地 token 还有效就直接复用，不重复登录。
 
