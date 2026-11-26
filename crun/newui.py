@@ -184,26 +184,34 @@ class App(ctk.CTk):
         self.school_count.place(x=self.X(18), y=self.X(40))
         self.btn(c1, "更新学校列表", cmd=self.on_schools, w=150).place(x=self.X(18), y=self.X(96))
 
-        # 账号
-        c2 = self.card(self.body, width=self.X(600), height=self.X(150))
+        # 账号（单账号模式 + 登录安全闸）
+        c2 = self.card(self.body, width=self.X(572), height=self.X(170))
         c2.place(x=self.X(344), y=self.X(88))
         c2.pack_propagate(False)
-        self.lbl(c2, "账号", size=13, bold=True).place(x=self.X(18), y=self.X(14))
+        self.lbl(c2, "账号", size=13, bold=True).place(x=self.X(18), y=self.X(12))
+        self.lbl(c2, "同一助手同时登多个号会被判代跑 —— 建议只用一个", size=10,
+                 color=P["warn"]).place(x=self.X(60), y=self.X(16))
         accs = self.store.accounts
-        for i, a in enumerate(accs[:2]):
-            self.lbl(c2, "%s · 学校 %s" % (a["username"], a["school_id"]), size=11).place(
-                x=self.X(18 + i * 280), y=self.X(44))
-            self.lbl(c2, "已授权" if a["user_id"] else "未授权", size=10, dim=True).place(
-                x=self.X(18 + i * 280), y=self.X(66))
-        self.ent_user = ctk.CTkEntry(c2, width=self.X(150), placeholder_text="学号")
-        self.ent_user.place(x=self.X(18), y=self.X(96))
-        self.ent_pwd = ctk.CTkEntry(c2, width=self.X(150), placeholder_text="密码", show="*")
-        self.ent_pwd.place(x=self.X(180), y=self.X(96))
-        self.btn(c2, "授权登录", cmd=self.on_login, primary=True, w=110).place(x=self.X(344), y=self.X(96))
+        names = [a["username"] for a in accs] or ["—"]
+        self.opt_login = ctk.CTkOptionMenu(c2, values=names, width=self.X(200),
+                                           fg_color=P["surface2"], button_color=P["accent"],
+                                           text_color=P["text"], font=(FONT, 12),
+                                           command=lambda _v: self._fill_pwd())
+        self.opt_login.place(x=self.X(18), y=self.X(44))
+        self.ent_pwd = ctk.CTkEntry(c2, width=self.X(180), placeholder_text="密码", show="*")
+        self.ent_pwd.place(x=self.X(230), y=self.X(44))
+        self.btn(c2, "登录 / 复用", cmd=self.on_login, primary=True, w=120).place(
+            x=self.X(424), y=self.X(44))
+        self.lbl_account_state = self.lbl(c2, "", size=10, dim=True, justify="left")
+        self.lbl_account_state.place(x=self.X(18), y=self.X(86))
+        self.lbl(c2, "同一个号 15 分钟内不重复登录；换号要等 24 小时冷却（可用环境变量调整）",
+                 size=9, color=P["dim"]).place(x=self.X(18), y=self.X(140))
+        self._fill_pwd()
+        self._refresh_login_state()
 
         # 路径 + 人脸
         c3 = self.card(self.body, width=self.X(916), height=self.X(120))
-        c3.place(x=self.X(28), y=self.X(252))
+        c3.place(x=self.X(28), y=self.X(276))
         c3.pack_propagate(False)
         self.lbl(c3, "路径", size=12, bold=True).place(x=self.X(18), y=self.X(16))
         self.lbl(c3, "%d 条历史路线" % len(self.store.routes), size=11, dim=True).place(x=self.X(18), y=self.X(40))
@@ -214,7 +222,7 @@ class App(ctk.CTk):
 
         # 日志（就在准备页里，不单开页）
         logc = self.card(self.body, width=self.X(916), height=self.X(250))
-        logc.place(x=self.X(28), y=self.X(386))
+        logc.place(x=self.X(28), y=self.X(410))
         logc.pack_propagate(False)
         self.lbl(logc, "运行日志", size=12, bold=True).place(x=self.X(18), y=self.X(10))
         self.log_prep = self.logbox(logc, 14, 36, 888, 200)
@@ -364,45 +372,206 @@ class App(ctk.CTk):
                 log("失败：%s" % e)
         self.bg(job)
 
+    # ---------------------------------------------------------------- 账号 / 登录
+    def _cur_account(self):
+        name = self.opt_login.get() if hasattr(self, "opt_login") else ""
+        for a in self.store.accounts:
+            if a["username"] == name:
+                return a
+        return None
+
+    def _fill_pwd(self):
+        acc = self._cur_account()
+        if not acc or not hasattr(self, "ent_pwd"):
+            return
+        row = self.store.q("select password from tsn_account where id=?", (acc["id"],))
+        try:
+            self.ent_pwd.delete(0, "end")
+            if row and row[0][0]:
+                self.ent_pwd.insert(0, row[0][0])
+        except Exception:
+            pass
+
+    def _refresh_login_state(self, note=""):
+        try:
+            from . import safe_login
+            rows = safe_login.summary(self.dir, self.store.accounts)
+            txt = "　".join("%s %s（%s）" % ("●" if r["active"] else "○", r["username"], r["last_login"])
+                            for r in rows)
+            self.lbl_account_state.configure(text=(note + "\n" + txt) if note else txt)
+        except Exception:
+            pass
+
     def on_login(self):
         log = self._log(self.log_prep)
-        user = self.ent_user.get().strip()
-        pwd = self.ent_pwd.get().strip()
-        if not user or not pwd:
-            log("学号和密码都要填")
+        acc = self._cur_account()
+        if not acc:
+            log("库里没有这个账号")
             return
+        pwd = self.ent_pwd.get().strip()
+        if not pwd:
+            log("密码是空的 —— 这个号以前没存密码，填上再登录")
+            return
+        self._do_login(acc, pwd, log, confirmed=False)
+
+    def _do_login(self, acc, pwd, log, confirmed=False):
+        from . import safe_login
+        # 密码可能刚改过，先写回库，bridge 用的是库里的值
+        try:
+            import sqlite3
+            con = sqlite3.connect(self.store.db)
+            con.execute("update tsn_account set password=? where id=?", (pwd, acc["id"]))
+            con.commit()
+            con.close()
+        except Exception as e:
+            log("写密码失败：%s" % e)
+
+        rows = self.store.q("select id, access_token, expires_in, username from tsn_account where id=?",
+                            (acc["id"],))
+        obj = type("A", (), {})()
+        if rows:
+            obj.id, obj.access_token, obj.expires_in, obj.username = rows[0]
+        else:
+            obj.id, obj.access_token, obj.expires_in, obj.username = acc["id"], "", 0, acc["username"]
+
+        check = safe_login.precheck(self.dir, obj)
+        if not check["ok"]:
+            if check["code"] == "switch" and confirmed:
+                safe_login.force_active(self.dir, obj)
+                log("已按你的确认强制切换账号（风险自担）")
+            else:
+                log("⛔ " + check["message"])
+                self._refresh_login_state("⛔ " + check["code"])
+                if check["code"] == "switch":
+                    self._ask_switch(acc, pwd, log, check)
+                return
+        if check["code"] == "reuse":
+            log("✅ " + check["message"])
+            self._refresh_login_state("已复用登录态")
+            return
+        self._wait_then_login(acc, pwd, log, safe_login.PHONE_SETTLE_S)
+
+    def _ask_switch(self, acc, pwd, log, check):
+        from tkinter import messagebox
+        ok = messagebox.askyesno(
+            "换号有封号风险",
+            "%s\n\n确认要现在就切到 %s 吗？\n\n"
+            "服务端会把短时间内先后登录两个账号判为代跑。\n"
+            "继续 = 你接受这个风险。" % (check["message"], acc["username"]))
+        if ok:
+            self._do_login(acc, pwd, log, confirmed=True)
+        else:
+            log("已取消换号")
+
+    def _wait_then_login(self, acc, pwd, log, seconds):
+        """手机退出后先等一会儿再发登录请求，降低"第二台设备"判定概率。"""
+        from tkinter import messagebox
+        wait = int(max(0, seconds))
+        if wait <= 0:
+            self._fire_login(acc, pwd, log)
+            return
+        win = ctk.CTkToplevel(self)
+        win.title("登录前置检查")
+        win.geometry("480x260")
+        win.configure(fg_color=P["bg"])
+        win.transient(self)
+        win.grab_set()
+        self.lbl(win, "确认手机端已退出登录", size=16, bold=True).pack(pady=(20, 6))
+        self.lbl(win, "手机会话在服务端可能还活着。现在立刻登录，会被当成第二台设备。\n"
+                      "倒计时结束再登录最稳。", size=11, dim=True, justify="left").pack(padx=24)
+        cd = self.lbl(win, "", size=28, bold=True, color=P["accent"])
+        cd.pack(pady=10)
+
+        state = {"left": wait, "done": False}
+
+        def tick():
+            if state["done"]:
+                return
+            if state["left"] <= 0:
+                cd.configure(text="可以登录", text_color=P["ok"])
+                btn.configure(state="normal", text="现在登录")
+                return
+            m, s = divmod(state["left"], 60)
+            cd.configure(text="%02d:%02d" % (m, s))
+            state["left"] -= 1
+            win.after(1000, tick)
+
+        def go():
+            if state["done"]:
+                return
+            state["done"] = True
+            win.destroy()
+            self._fire_login(acc, pwd, log)
+
+        def skip():
+            if not messagebox.askyesno("确认跳过等待",
+                                       "跳过等待会提高被判定为第二台设备的概率。\n\n确实已经退出手机端、"
+                                       "并且离退出超过几分钟了吗？"):
+                return
+            log("⚠ 你跳过了等待，直接登录")
+            go()
+
+        btn = self.btn(win, "等待中…", cmd=go, primary=True, w=150, h=40)
+        btn.configure(state="disabled")
+        btn.pack(pady=12)
+        self.btn(win, "跳过等待（不推荐）", cmd=skip, w=170, h=32).pack()
+        tick()
+
+    def _fire_login(self, acc, pwd, log):
         def job():
-            from . import bridge
-            log("正在授权 %s …" % user)
+            from . import bridge, safe_login
+            log("正在登录 %s（token 有效会直接复用）…" % acc["username"])
             try:
-                import types
-                acc = types.SimpleNamespace(user_id="", school_id=0, username=user,
-                                            password=pwd, expires_in=0,
-                                            mobile_device_id=None, access_token="")
-                bridge.login(acc, log)
-                log("授权完成")
+                bridge.login(acc["id"], log)
+                safe_login.record(self.dir, type("A", (), {"id": acc["id"], "username": acc["username"]}))
+                log("✅ 登录态就绪")
+                self.after(0, self._refresh_login_state, "登录完成")
             except Exception as e:
-                log("授权失败：%s" % e)
+                log("登录失败：%s" % e)
+                self.after(0, self._refresh_login_state, "登录失败")
         self.bg(job)
+
+    # ---------------------------------------------------------------- 账号选择
+    def active_account(self):
+        """当前活跃账号：登录安全闸记的那个；没有就退回第一个。"""
+        try:
+            from . import safe_login
+            st = safe_login.load(self.dir)
+            act = st.get("active")
+            for a in self.store.accounts:
+                if str(a["id"]) == str(act):
+                    return a
+        except Exception:
+            pass
+        return self.store.accounts[0] if self.store.accounts else None
 
     def on_crawl(self):
         log = self._log(self.log_prep)
+        acc = self.active_account()
+        if not acc:
+            log("没有账号")
+            return
         def job():
             from . import bridge
-            log("开始爬取路径…")
+            log("开始爬取路径（账号 %s）…" % acc["username"])
             try:
-                bridge.crawl_paths(self.store.accounts[0]["id"], log)
+                bridge.crawl_paths(acc["id"], log)
+                log("爬取完成")
             except Exception as e:
                 log("爬取失败：%s" % e)
         self.bg(job)
 
     def on_face(self):
         log = self._log(self.log_prep)
+        acc = self.active_account()
+        if not acc:
+            log("没有账号")
+            return
         def job():
             from . import bridge
-            log("开始更新人脸…")
+            log("开始更新人脸（账号 %s）…" % acc["username"])
             try:
-                bridge.update_face(self.store.accounts[0]["id"], log)
+                bridge.update_face(acc["id"], log)
             except Exception as e:
                 log("更新失败：%s" % e)
         self.bg(job)
@@ -440,11 +609,8 @@ class App(ctk.CTk):
 
         def job():
             from . import bridge
-            from tsnRunServer import TsnRunType
-            t = {"morning_run": TsnRunType.morningRun, "free_run": TsnRunType.freedom,
-                 "sunshine_run": TsnRunType.sumRun}[key]
             try:
-                bridge.run(self.store.accounts[0]["id"], km, t, minutes, cadence,
+                bridge.run(self.active_account()["id"], km, key, minutes, cadence,
                            log=lambda m: log(m),
                            on_progress=lambda m: self.after(0, self._on_progress, m))
                 self.after(0, self._finish, True, "")

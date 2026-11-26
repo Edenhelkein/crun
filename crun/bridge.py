@@ -144,13 +144,28 @@ def schools_of_province(province_id, log=print):
     return rows
 
 
-def login(account, log=print):
-    """用库里已有的账号做一次登录刷新 token。"""
+def login(account_id, log=print):
+    """走原版的私有客户端：本地 token 还有效就直接复用，不重复登录。
+
+    这一点很关键 —— 每次重新 appLogin 都是一次新的设备握手，
+    短时间内反复登录是封号的头号诱因。
+    """
     ensure_paths()
-    cli = _private(account)
-    resp = _run(cli.appLogin(account.username, account.password))
-    log("登录返回：%s" % str(resp)[:120])
-    return resp
+    import database
+    from tsnClient import getPrivateVersionClient, getTsnAccountByid
+
+    async def work():
+        async for db in database.get_db():
+            acc = await getTsnAccountByid(account_id, db)
+            if acc is None:
+                raise RuntimeError("账号不存在")
+            log("获取客户端：%s" % getattr(acc, "username", account_id))
+            cli = await getPrivateVersionClient(acc)
+            return acc, cli
+
+    acc, cli = _run(work())
+    log("登录态就绪（token 有效则不会重新登录）")
+    return acc, cli
 
 
 def update_schools(db_path, log=print, only_provinces=None):
@@ -297,11 +312,20 @@ def update_face(account_id, log=print):
     return res
 
 
+RUN_TYPES = {"morning_run": "morningRun", "free_run": "freedom", "sunshine_run": "sumRun"}
+
+
 def run(account_id, km, run_type, minutes=None, cadence=None, log=print, on_progress=None):
-    """跑一次。on_progress(文本) 会实时收到原版 logger 的每一行（配速/等待/剩余）。"""
+    """跑一次。run_type 可以传 'morning_run'/'free_run'/'sunshine_run' 或 TsnRunType 常量。"""
     ensure_paths()
     import logging
-    from tsnRunServer import TsnRunServer
+    try:
+        from tsnRunServer import TsnRunServer, TsnRunType
+    except ImportError as e:
+        raise RuntimeError("缺少运行内核 tsnRunServer（%s）。请用安装包装一遍，"
+                           "或确认程序目录下有 _internal\\legacy\\tsnRunServer.pyc" % e)
+    if isinstance(run_type, str):
+        run_type = getattr(TsnRunType, RUN_TYPES.get(run_type, "freedom"))
 
     class _Sink(logging.Handler):
         def emit(self, rec):
