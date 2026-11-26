@@ -406,6 +406,110 @@ def diagnose(account_id, log=print):
     return out
 
 
+def refresh_session(account_id, log=print):
+    """用 refresh_token 续期，不产生新的设备登录 —— 目前最安全的续命方式。
+
+    实测这个接口就是 App 自己在用的：
+      POST <学校API>/auth/oauth/token?grant_type=refresh_token&refresh_token=..&scope=server&type=app&appType=stuApp
+    返回 200 表示续期成功，会把新的 access_token 写回库里。
+    """
+    ensure_paths()
+    import sqlite3
+    import uuid
+    import warnings
+    warnings.filterwarnings("ignore")
+    httpx = _auth_client()
+    db_path = os.path.join(os.getcwd(), "tsn_data.db")
+    con = sqlite3.connect(db_path, timeout=10)
+    row = con.execute("select refresh_token from tsn_account where id=?", (account_id,)).fetchone()
+    con.close()
+    rt = (row[0] if row else "") or ""
+    if not rt:
+        log("库里没有 refresh_token，无法静默续期")
+        return {"ok": False, "detail": "无 refresh_token"}
+
+    base = _api_base(account_id)
+    url = base.rstrip("/") + "/auth/oauth/token"
+    params = {"grant_type": "refresh_token", "refresh_token": rt, "scope": "server",
+              "type": "app", "appType": "stuApp"}
+    try:
+        r = httpx.post(url, params=params, timeout=20, verify=False,
+                       headers={"User-Agent": "okhttp/3.12.0", "Accept": "application/json"})
+    except Exception as e:
+        log("续期请求失败：%s" % e)
+        return {"ok": False, "detail": str(e)}
+    if r.status_code != 200:
+        log("续期失败：HTTP %s %s" % (r.status_code, r.text[:120]))
+        return {"ok": False, "detail": "HTTP %s" % r.status_code}
+    try:
+        data = r.json()
+    except Exception:
+        return {"ok": False, "detail": "响应不是 JSON"}
+    tok = data.get("access_token") or ""
+    new_rt = data.get("refresh_token") or rt
+    if not tok:
+        return {"ok": False, "detail": "响应里没有 access_token"}
+    con = sqlite3.connect(db_path, timeout=10)
+    con.execute("update tsn_account set access_token=?, refresh_token=?, expires_in=? where id=?",
+                (tok, new_rt, 86399, account_id))
+    con.commit()
+    con.close()
+    log("✅ refresh_token 续期成功（没有产生新的设备登录）")
+    return {"ok": True, "detail": "续期成功", "token": tok}
+
+
+def _api_base(account_id):
+    """学校 API 基址：优先 lan_url（学校自建域名），退回 a.tsnkj.com。"""
+    import sqlite3
+    try:
+        con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+        row = con.execute(
+            "select s.lan_url, s.school_url from tsn_account a join tsn_school s"
+            " on s.school_id=a.school_id where a.id=?", (account_id,)).fetchone()
+        con.close()
+    except Exception:
+        row = None
+    lan = (row[0] if row else "") or ""
+    if lan.startswith("http"):
+        return lan
+    su = (row[1] if row else "") or ""
+    if su.startswith("http"):
+        return su.split("?")[0]
+    return "https://a.tsnkj.com"
+
+
+def check_ban(account_id, log=print):
+    """查是否在禁跑黑名单：接口返回 HTTP 999 就是黑名单。"""
+    ensure_paths()
+    import warnings
+    warnings.filterwarnings("ignore")
+    httpx = _auth_client()
+    import sqlite3
+    con = sqlite3.connect(os.path.join(os.getcwd(), "tsn_data.db"), timeout=10)
+    tok = con.execute("select access_token from tsn_account where id=?", (account_id,)).fetchone()
+    con.close()
+    tok = (tok[0] if tok else "") or ""
+    if not tok:
+        return {"known": False, "banned": False, "detail": "没有 token，无法检查"}
+    base = _api_base(account_id)
+    url = base.rstrip("/") + "/exercise/exerciseRecord/sumExerciseRecord"
+    try:
+        r = httpx.get(url, headers={"Authorization": "bearer " + tok, "User-Agent": "okhttp/3.12.0"},
+                      timeout=15, verify=False)
+    except Exception as e:
+        return {"known": False, "banned": False, "detail": str(e)}
+    if r.status_code == 999:
+        msg = ""
+        try:
+            j = r.json()
+            msg = j.get("message") or j.get("msg") or ""
+        except Exception:
+            msg = r.text[:200]
+        log("⛔ 禁跑黑名单：%s" % msg)
+        return {"known": True, "banned": True, "detail": msg, "raw": r.text[:400]}
+    return {"known": True, "banned": False, "detail": "HTTP %s" % r.status_code}
+
+
 def login(account_id, log=print):
     """走原版的私有客户端：本地 token 还有效就直接复用，不重复登录。
 

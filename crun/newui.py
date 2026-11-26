@@ -174,10 +174,11 @@ class App(ctk.CTk):
     # ---------------------------------------------------------------- 准备页
     def _p_prep(self):
         self.head("准备", "学校、账号、路径、人脸 —— 跑之前先把这些弄好")
+        self._prep_checklist()
 
         # 学校
         c1 = self.card(self.body, width=self.X(300), height=self.X(150))
-        c1.place(x=self.X(28), y=self.X(88))
+        c1.place(x=self.X(28), y=self.X(214))
         c1.pack_propagate(False)
         self.lbl(c1, "学校", size=13, bold=True).place(x=self.X(18), y=self.X(14))
         self.school_count = self.lbl(c1, "%d 所" % self.store.schools, size=26, bold=True)
@@ -186,7 +187,7 @@ class App(ctk.CTk):
 
         # 账号（单账号模式 + 登录安全闸）
         c2 = self.card(self.body, width=self.X(572), height=self.X(196))
-        c2.place(x=self.X(344), y=self.X(88))
+        c2.place(x=self.X(344), y=self.X(214))
         c2.pack_propagate(False)
         self.lbl(c2, "账号", size=13, bold=True).place(x=self.X(18), y=self.X(12))
         self.lbl(c2, "同一助手同时登多个号会被判代跑 —— 建议只用一个", size=10,
@@ -213,7 +214,7 @@ class App(ctk.CTk):
 
         # 路径 + 人脸
         c3 = self.card(self.body, width=self.X(916), height=self.X(120))
-        c3.place(x=self.X(28), y=self.X(300))
+        c3.place(x=self.X(28), y=self.X(422))
         c3.pack_propagate(False)
         self.lbl(c3, "路径", size=12, bold=True).place(x=self.X(18), y=self.X(16))
         self.lbl(c3, "%d 条历史路线" % len(self.store.routes), size=11, dim=True).place(x=self.X(18), y=self.X(40))
@@ -223,11 +224,11 @@ class App(ctk.CTk):
         self.btn(c3, "更新人脸", cmd=self.on_face, w=110).place(x=self.X(300), y=self.X(70))
 
         # 日志（就在准备页里，不单开页）
-        logc = self.card(self.body, width=self.X(916), height=self.X(250))
-        logc.place(x=self.X(28), y=self.X(434))
+        logc = self.card(self.body, width=self.X(916), height=self.X(140))
+        logc.place(x=self.X(28), y=self.X(552))
         logc.pack_propagate(False)
         self.lbl(logc, "运行日志", size=12, bold=True).place(x=self.X(18), y=self.X(10))
-        self.log_prep = self.logbox(logc, 14, 36, 888, 200)
+        self.log_prep = self.logbox(logc, 14, 36, 888, 96)
         if getattr(self, "db_state", "ok") != "ok":
             self.say(self.log_prep, "⚠ 本地数据库缺失或损坏，已自动恢复到：%s" % self.db_state)
             self.say(self.log_prep, "   如果账号不见了，用学号+密码重新授权一次即可。")
@@ -567,6 +568,107 @@ class App(ctk.CTk):
             pass
         return self.store.accounts[0] if self.store.accounts else None
 
+    def on_oneclick(self):
+        """一键准备：学校 → 续期 → 路线 → 人脸 → 体检，缺什么补什么，已有的跳过。"""
+        log = self._log(self.log_prep)
+        acc = self.active_account()
+        if not acc:
+            log("没有账号，先在准备页登录")
+            return
+        if getattr(self, "prepping", False):
+            log("一键准备已经在跑了")
+            return
+        self.prepping = True
+
+        def job():
+            from . import bridge, preflight
+            ok_all = True
+            try:
+                log("========== 一键准备开始 ==========")
+
+                # ① 学校
+                n = self.store.schools
+                if n < 100:
+                    log("① 学校列表只有 %d 所，开始更新…" % n)
+                    try:
+                        bridge.update_schools(self.store.db, log)
+                    except Exception as e:
+                        log("   学校更新失败：%s" % e)
+                        ok_all = False
+                else:
+                    log("① 学校列表 %d 所，跳过" % n)
+
+                # ② 登录态（只用 refresh 续期，绝不触发新的设备登录）
+                log("② 检查登录态…")
+                st = bridge.refresh_session(acc["id"], log=log)
+                if not st.get("ok"):
+                    log("   续期没成功（%s）。为安全起见不自动重登 ——" % st.get("detail"))
+                    log("   请手动点「登录 / 复用」（有冷却与倒计时保护），或用「粘贴 token」")
+                    ok_all = False
+
+                # ③ 路线
+                if len(self.store.routes) == 0:
+                    log("③ 本地没有路线，开始爬取…")
+                    try:
+                        bridge.crawl_paths(acc["id"], log)
+                    except Exception as e:
+                        log("   爬取失败：%s" % e)
+                        ok_all = False
+                else:
+                    log("③ 已有 %d 条路线，跳过" % len(self.store.routes))
+
+                # ④ 人脸
+                faces = 0
+                fdir = os.path.join(self.dir, "face_images")
+                if os.path.isdir(fdir):
+                    for _r, _d, fs in os.walk(fdir):
+                        faces += len([f for f in fs if f.lower().endswith((".jpg", ".png"))])
+                if faces == 0:
+                    log("④ 本地没有人脸照片，开始拉取…")
+                    try:
+                        bridge.update_face(acc["id"], log)
+                    except Exception as e:
+                        log("   人脸更新失败：%s" % e)
+                        ok_all = False
+                else:
+                    log("④ 已有 %d 张人脸，跳过" % faces)
+
+                # ⑤ 体检
+                log("⑤ 复查本地状态…")
+                for name, good, detail, todo in preflight.local_checks(self.dir):
+                    log("   %s %s：%s" % ("✅" if good else "❌", name, detail if good else todo))
+                    if not good:
+                        ok_all = False
+                log("========== 一键准备结束：%s ==========" % ("全部就绪" if ok_all else "有项目没搞定，看上面"))
+            finally:
+                self.prepping = False
+                self.after(0, lambda: self.show("prep"))
+        self.bg(job)
+
+    def _prep_checklist(self):
+        """防呆清单：每项一眼看出缺什么、该点哪儿。"""
+        try:
+            from . import preflight
+            rows = preflight.local_checks(self.dir)
+        except Exception:
+            return
+        bar = self.card(self.body, width=self.X(916), height=self.X(124))
+        bar.place(x=self.X(28), y=self.X(78))
+        bar.pack_propagate(False)
+        self.lbl(bar, "开跑前检查（缺什么点右边那句话去做）", size=11, bold=True).place(
+            x=self.X(16), y=self.X(8))
+        col = 0
+        for i, (name, ok, detail, todo) in enumerate(rows):
+            r, c = divmod(i, 2)
+            x = 16 + c * 450
+            y = 30 + r * 26
+            self.lbl(bar, ("✅ " if ok else "❌ ") + name, size=10, bold=True,
+                     color=P["ok"] if ok else P["bad"]).place(x=self.X(x), y=self.X(y))
+            tail = todo if (not ok and todo != "正常") else detail
+            self.lbl(bar, tail, size=9, dim=True).place(x=self.X(x + 74), y=self.X(y + 1))
+        self.btn(bar, "一键准备", cmd=self.on_oneclick, primary=True, w=120, h=34).place(
+            x=self.X(770), y=self.X(40))
+
     def on_diagnose(self):
         log = self._log(self.log_prep)
         acc = self.active_account()
@@ -673,7 +775,13 @@ class App(ctk.CTk):
                            on_progress=lambda m: self.after(0, self._on_progress, m))
                 self.after(0, self._finish, True, "")
             except Exception as e:
-                self.after(0, self._finish, False, "跑步失败：%s" % e)
+                try:
+                    from . import preflight
+                    why = preflight.explain_error(e)
+                    msg = "跑步失败：%s\n原因：%s\n怎么办：%s" % (e, why["what"], why["todo"])
+                except Exception:
+                    msg = "跑步失败：%s" % e
+                self.after(0, self._finish, False, msg)
         self.bg(job)
 
     def on_query(self):
